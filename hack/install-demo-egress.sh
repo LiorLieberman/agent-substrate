@@ -36,7 +36,7 @@ demo-egress_deploy() {
     | run_ko apply -f -
 
   log_step "Waiting for egress demo to be ready..."
-  run_kubectl rollout status deployment/egress-deployment -n ate-demo-egress --timeout=300s
+  run_kubectl rollout status deployment/egress -n ate-demo-egress --timeout=300s
   run_kubectl wait --for=condition=Ready actortemplate/egress -n ate-demo-egress --timeout=300s
 }
 
