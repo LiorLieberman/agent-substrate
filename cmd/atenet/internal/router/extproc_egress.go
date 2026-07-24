@@ -53,12 +53,11 @@ func headerValue(h *corev3.HeaderValue) string {
 }
 
 // handleEgressRequestHeaders authenticates the actor identity that atunnel
-// asserts on an egress CONNECT, before the gateway tunnels it out. This is the
-// Milestone-1 "identity / metadata validation" step: it turns the
+// asserts on an egress CONNECT, before the gateway tunnels it out. This turns the
 // worker-asserted X-Ate-* headers into a control-plane-verified identity.
 //
 // Authorization by destination and credential/token injection are deliberately
-// left to Milestone 2 (this handler only continues or denies; it never routes).
+// a TODO once we have SessionIdentity RPC service figured out.
 //
 // The signature mirrors handleRequestHeaders so Process can dispatch to either
 // with a single branch. The (target, tmplNs, tmplName) results are unused for

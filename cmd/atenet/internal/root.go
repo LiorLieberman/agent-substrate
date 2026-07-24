@@ -23,9 +23,10 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:     "atenet",
-	Short:   "atenet manages Actor DNS resolution.",
-	Long:    `atenet manages Actor DNS resolution.`,
+	Use: "atenet",
+	// TODO(liorlieberman): better description?
+	Short:   "atenet is a combined daemon for all networking functionality.",
+	Long:    `atenet is a combined daemon for all networking functionality`,
 	Version: version.String(),
 }
 

@@ -42,6 +42,7 @@ these.
 > am prepared to maintain its API indefinitely."
 
 ### `cmd/<binary>/`
+<!-- TODO(liorlieberman) update this -->
 
 Each subdirectory of `cmd/` corresponds to one compiled binary:
 
@@ -50,7 +51,7 @@ Each subdirectory of `cmd/` corresponds to one compiled binary:
 | `cmd/ateapi`         | Control-plane API server (gRPC)                       |
 | `cmd/atecontroller`  | Kubernetes controller for WorkerPool/ActorTemplate    |
 | `cmd/atelet`         | Node supervisor (DaemonSet)                           |
-| `cmd/atenet`         | Actor DNS controller                                   |
+| `cmd/atenet`         | Network proxy / Envoy external-processing server                                |
 | `cmd/ateom-gvisor`   | In-pod gVisor container image entry point             |
 | `cmd/ateom-microvm`  | In-pod kata + cloud-hypervisor micro-VM container image entry point |
 | `cmd/kubectl-ate`    | `kubectl` plugin for interacting with Substrate       |

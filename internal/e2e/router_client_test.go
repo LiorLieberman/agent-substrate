@@ -74,7 +74,7 @@ func TestResolveHTTPTargetPort(t *testing.T) {
 	pod := &corev1.Pod{
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{
-				Name:  "agentgateway",
+				Name:  "envoy",
 				Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}},
 			}},
 		},
@@ -90,7 +90,7 @@ func TestResolveHTTPTargetPort(t *testing.T) {
 	zeroPortPod := &corev1.Pod{
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{
-				Name:  "agentgateway",
+				Name:  "envoy",
 				Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 0}},
 			}},
 		},

@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# POC: Envoy-based egress gateway. Replaces the agentgateway data plane while
-# keeping the same contract expected by atunnel's egress client:
+# contract expected by atunnel's egress client:
 #   * downstream mTLS on :443 (present servicedns identity, require + verify a
 #     podidentity client cert),
 #   * terminate the actor's HTTP CONNECT and tunnel raw TCP to the CONNECT

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# POC verification for pluggable egress (guides 2 & 3).
 #
 # Preconditions:
 #   hack/create-kind-cluster.sh

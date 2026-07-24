@@ -38,7 +38,7 @@ const (
 	routerService   = "atenet-router"
 )
 
-// RouterClient sends HTTP requests to actors through the ingress gateway, the
+// RouterClient sends HTTP requests to actors through the ingress atenet-router, the
 // same way real traffic arrives (so the request is routed and, if needed, the
 // actor is resumed). It port-forwards the router Service, mirroring the
 // approach in internal/ateclient.
@@ -48,7 +48,7 @@ type RouterClient struct {
 	stopCh  chan struct{}
 }
 
-// NewRouterClient establishes a port-forward to the ingress gateway. Call Close
+// NewRouterClient establishes a port-forward to the ingress atenet-router. Call Close
 // to tear it down.
 func NewRouterClient(ctx context.Context) (*RouterClient, error) {
 	config, err := ateclient.LoadConfig(KubeConfig, KubeContext)
