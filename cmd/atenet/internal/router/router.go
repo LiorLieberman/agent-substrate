@@ -190,6 +190,7 @@ func (s *RouterServer) Run(ctx context.Context) error {
 	}
 
 	xdsSrv.SetTlsConfig(s.cfg.HttpsPort, s.cfg.EnvoyCertPath)
+	xdsSrv.SetUpstreamTls(s.cfg.UpstreamClientCertPath, s.cfg.UpstreamTrustPath, s.cfg.UpstreamSpiffePrefix)
 	if s.extprocSrv == nil {
 		routeDuration, err := newRouteDurationHistogram()
 		if err != nil {
