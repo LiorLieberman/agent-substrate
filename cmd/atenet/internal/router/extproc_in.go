@@ -26,12 +26,14 @@ type requestMetadata struct {
 	headers map[string]string
 	path    string
 	host    string
+	method  string
 }
 
 func newRequestMetadata(headers []*corev3.HeaderValue) *requestMetadata {
 	headersMap := make(map[string]string)
 	var path string
 	var host string
+	var method string
 
 	for _, h := range headers {
 		k := strings.ToLower(h.Key)
@@ -47,21 +49,25 @@ func newRequestMetadata(headers []*corev3.HeaderValue) *requestMetadata {
 		if k == ":authority" || k == "host" {
 			host = val
 		}
+		if k == ":method" {
+			method = val
+		}
 	}
 
 	return &requestMetadata{
 		headers: headersMap,
 		path:    path,
 		host:    host,
+		method:  method,
 	}
 }
 
-// parseActorRef extracts the (atespace, actor id) an incoming request is
+// parseActorRef extracts the (atespace, actor name) an incoming request is
 // addressed to from its Host/:authority, which has the form
-// "<actor_id>.<atespace>.actors.resources.substrate.ate.dev" (optionally with a
-// port). The atespace is required because an actor id is only unique within its
+// "<actor_name>.<atespace>.actors.resources.substrate.ate.dev" (optionally with a
+// port). The atespace is required because an actor name is only unique within its
 // atespace.
-func parseActorRef(host string) (atespace, actorID string, err error) {
+func parseActorRef(host string) (atespace, actorName string, err error) {
 	if strings.Contains(host, ":") {
 		host, _, err = net.SplitHostPort(host)
 		if err != nil {

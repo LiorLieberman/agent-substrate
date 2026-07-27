@@ -129,6 +129,15 @@ data:
                       cluster_name: ext_proc_server
                     timeout: 2s
                   failure_mode_allow: false
+                  # How the ext_proc server tells egress from ingress. It applies
+                  # opposite trust models to the two directions, and dispatches on
+                  # this Envoy-asserted listener name so that no client can select
+                  # the egress path by crafting a request. The value must match
+                  # EgressListenerName in cmd/atenet/internal/router/extproc_egress.go;
+                  # renaming the listener above without updating it fails closed
+                  # (egress requests take the ingress path and 404).
+                  request_attributes:
+                  - xds.listener_name
                   processing_mode:
                     request_header_mode: SEND
                     response_header_mode: SKIP

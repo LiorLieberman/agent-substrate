@@ -30,7 +30,7 @@ const networkingAtespace = "networking-e2e"
 
 func TestActorDirectAccess(t *testing.T) {
 	ctx := context.Background()
-	actorID, actor := createAndResumeActor(t, ctx, "direct")
+	actorName, actor := createAndResumeActor(t, ctx, "direct")
 	router := mustRouterClient(t, ctx)
 	defer router.Close()
 
@@ -38,7 +38,7 @@ func TestActorDirectAccess(t *testing.T) {
 		assertDirectActorAccess(t, ctx, e2e.GetClients(), actor)
 	})
 	t.Run("via ingress", func(t *testing.T) {
-		response, err := router.Get(ctx, networkingAtespace, actorID, "/readyz")
+		response, err := router.Get(ctx, networkingAtespace, actorName, "/readyz")
 		if err != nil {
 			t.Fatalf("GET Actor through ingress: %v", err)
 		}
@@ -57,15 +57,15 @@ func TestActorDirectAccess(t *testing.T) {
 func createAndResumeActor(t *testing.T, ctx context.Context, prefix string) (string, *ateapipb.Actor) {
 	t.Helper()
 	clients := e2e.GetClients()
-	actorID := fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
-	actorRef := &ateapipb.ObjectRef{Atespace: networkingAtespace, Name: actorID}
+	actorName := fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	actorRef := &ateapipb.ObjectRef{Atespace: networkingAtespace, Name: actorName}
 
-	t.Logf("creating actor %s/%s", networkingAtespace, actorID)
+	t.Logf("creating actor %s/%s", networkingAtespace, actorName)
 	_, _ = clients.SubstrateAPI.CreateAtespace(ctx, &ateapipb.CreateAtespaceRequest{
 		Atespace: &ateapipb.Atespace{Metadata: &ateapipb.ResourceMetadata{Name: networkingAtespace}},
 	})
 	if _, err := clients.SubstrateAPI.CreateActor(ctx, &ateapipb.CreateActorRequest{Actor: &ateapipb.Actor{
-		Metadata:               &ateapipb.ResourceMetadata{Atespace: networkingAtespace, Name: actorID},
+		Metadata:               &ateapipb.ResourceMetadata{Atespace: networkingAtespace, Name: actorName},
 		ActorTemplateNamespace: "ate-demo-egress",
 		ActorTemplateName:      "egress",
 	}}); err != nil {
@@ -80,8 +80,8 @@ func createAndResumeActor(t *testing.T, ctx context.Context, prefix string) (str
 	if err != nil {
 		t.Fatalf("ResumeActor: %v", err)
 	}
-	t.Logf("resumed actor %s/%s", networkingAtespace, actorID)
-	return actorID, resumeResponse.GetActor()
+	t.Logf("resumed actor %s/%s", networkingAtespace, actorName)
+	return actorName, resumeResponse.GetActor()
 }
 
 func mustRouterClient(t *testing.T, ctx context.Context) *e2e.RouterClient {

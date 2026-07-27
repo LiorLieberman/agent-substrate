@@ -66,7 +66,7 @@ const (
 	// OriginalDstClusterName routes actor traffic to the worker's atunnel
 	// ingress by the IP:port the ext_proc puts in OriginalDstHeader, while the
 	// request :authority stays the actor DNS name so atunnel can identify the
-	// active actor. This replaces the plain pod-IP:80 DFP path from main.
+	// active actor.
 	OriginalDstClusterName = "actor_original_dst"
 	// OriginalDstHeader carries the resolved worker atunnel address (IP:443).
 	OriginalDstHeader = "x-ate-original-dst"
@@ -141,7 +141,7 @@ func (x *XdsServer) SetTlsConfig(httpsPort int, certPath string, certContent str
 // cluster. clientCertPath is the router's podidentity credential bundle
 // (cert+key concatenated) presented to the actor's atunnel ingress server;
 // trustPath is the CA bundle used to validate that server. Empty clientCertPath
-// leaves the upstream as plaintext (legacy pod-IP:80 behaviour).
+// leaves the upstream as plaintext.
 func (x *XdsServer) SetUpstreamTls(clientCertPath, trustPath, spiffePrefix string) {
 	x.mu.Lock()
 	defer x.mu.Unlock()

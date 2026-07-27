@@ -340,7 +340,7 @@ A `WorkerPool` selects a **sandbox class** (`spec.sandboxClass`), and each class
 
   * **micro-VM** (`ateom-microvm`): Runs the workload inside a [Kata Containers](https://katacontainers.io/) guest on the [Cloud Hypervisor](https://www.cloudhypervisor.org/) VMM. Suspend and resume capture a memory-only VM snapshot and restore it on-demand using `userfaultfd` memory demand-paging, with container rootfs writes captured in guest RAM via a `tmpfs` overlay.
 
-### Networking Stack (`atenet` DNS + `ateway` + `atunnel`)
+### Networking Stack (`atenet` DNS + `atunnel`)
 
 Handles session-aware routing and automatic re-animation.
 

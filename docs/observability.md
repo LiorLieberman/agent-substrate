@@ -178,6 +178,8 @@ Telemetry is emitted the same way everywhere; only the backend differs between a
 | Traces | Jaeger UI | Google Cloud Trace |
 | Dashboards | Not supported | Google Cloud Monitoring (see [Dashboards](#5-dashboards)) |
 
+> In Kind only `ateapi` and `atelet` are pointed at the in-cluster collector; `atenet-router` still targets the GKE collector endpoint, so `atenet.router.route.duration` is emitted but not collected locally.
+
 ---
 
 ## 5. Dashboards

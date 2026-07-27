@@ -184,7 +184,7 @@ spec:
         - name: "servicedns"
           mountPath: "/run/servicedns.podcert.ate.dev"
         # podidentity credential + trust bundles for actor-facing (upstream)
-        # mTLS. Envoy's dynamic_forward_proxy cluster presents this credential
+        # mTLS. Envoy's ORIGINAL_DST actor cluster presents this credential
         # bundle as its client cert when dialing the actor's atunnel ingress
         # server on :443, and validates that server against the trust bundle.
         # The issued SPIFFE identity is

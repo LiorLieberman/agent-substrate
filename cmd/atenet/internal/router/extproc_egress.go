@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 
-	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	envoy_type "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"google.golang.org/grpc/codes"
@@ -31,25 +30,47 @@ import (
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 )
 
-// isEgressRequest reports whether an ext_proc RequestHeaders callback is for an
-// actor egress CONNECT rather than an ingress request. The egress gateway
-// terminates the actor's HTTP CONNECT, so the request :method is always CONNECT;
-// ingress requests never are. This lets one ext_proc server handle both
-// directions off the same stream.
-func isEgressRequest(reqHeaders *extprocv3.HttpHeaders) bool {
-	for _, h := range reqHeaders.GetHeaders().GetHeaders() {
-		if strings.EqualFold(h.GetKey(), ":method") {
-			return strings.EqualFold(headerValue(h), "CONNECT")
-		}
-	}
-	return false
+const (
+	// EgressListenerName is the Envoy listener that terminates actor egress
+	// CONNECTs. It must stay in sync with the listener name in
+	// manifests/ate-install/ateway-egress.yaml.
+	EgressListenerName = "egress"
+	// ListenerNameAttribute is the CEL attribute carrying the name of the
+	// listener that accepted the request. The egress Envoy asks for it via
+	// request_attributes on its ext_proc filter.
+	ListenerNameAttribute = "xds.listener_name"
+)
+
+// isEgressRequest reports whether an ext_proc RequestHeaders callback arrived on
+// the egress gateway's listener rather than on an ingress listener. This lets
+// one ext_proc server handle both directions off the same stream.
+//
+// Dispatch is by listener, not by :method, because the two handlers apply
+// opposite trust models: on egress the X-Ate-* identity headers are asserted by
+// atunnel over mTLS, while on ingress the same headers are unauthenticated
+// client input. Keying on :method would let any external client sending CONNECT
+// select the egress handler and use its denial messages as an actor-existence
+// and status oracle. Envoy asserts the listener name; the request cannot
+// influence it.
+//
+// An unrecognised or absent attribute means ingress, the fail-safe direction: an
+// egress request misrouted to the ingress handler fails to parse as an actor DNS
+// name and 404s, whereas the reverse leaks control-plane state.
+func isEgressRequest(req *extprocv3.ProcessingRequest) bool {
+	return listenerName(req) == EgressListenerName
 }
 
-func headerValue(h *corev3.HeaderValue) string {
-	if v := h.GetValue(); v != "" {
-		return v
+// listenerName returns the xds.listener_name attribute Envoy attached to the
+// request, or "" when the listener did not request the attribute. The
+// attributes map is keyed by the ext_proc filter's name within the HCM chain,
+// which we do not want to hardcode here, so scan every entry.
+func listenerName(req *extprocv3.ProcessingRequest) string {
+	for _, attrs := range req.GetAttributes() {
+		if v, ok := attrs.GetFields()[ListenerNameAttribute]; ok {
+			return v.GetStringValue()
+		}
 	}
-	return string(h.GetRawValue())
+	return ""
 }
 
 // handleEgressRequestHeaders authenticates the actor identity that atunnel
@@ -67,6 +88,16 @@ func (s *ExtProcServer) handleEgressRequestHeaders(
 	reqHeaders *extprocv3.HttpHeaders,
 ) (*extprocv3.HeadersResponse, *requestMetadata, string, string, string, error) {
 	metadata := newRequestMetadata(reqHeaders.Headers.GetHeaders())
+
+	// Dispatch is by listener, so reaching here means the egress listener
+	// accepted the request. That listener only routes CONNECT (its sole route
+	// is a connect_matcher), so anything else is a config drift rather than a
+	// client the gateway should tunnel for.
+	if !strings.EqualFold(metadata.method, "CONNECT") {
+		return nil, metadata, "", "", "", newReqError(envoy_type.StatusCode_MethodNotAllowed,
+			"egress denied: expected CONNECT, got %q", metadata.method)
+	}
+
 	atespace := metadata.headers[strings.ToLower(atunnel.ActorAtespaceHeader)]
 	actorName := metadata.headers[strings.ToLower(atunnel.ActorNameHeader)]
 	assertedVersion := metadata.headers[strings.ToLower(atunnel.ActorVersionHeader)]

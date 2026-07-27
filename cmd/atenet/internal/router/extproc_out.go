@@ -47,9 +47,15 @@ func addAuthorityMutation(auth string, mut *extproc.HeaderMutation) {
 // the upstream address (the worker atunnel IP:443). Unlike an :authority
 // rewrite it leaves the request Host intact, so atunnel still sees the actor
 // DNS name and can authorize the active actor.
+//
+// Nothing strips this header from the incoming request, so overwrite rather
+// than append: a client-supplied value must never influence the address Envoy
+// dials. ext_proc mutations already default to replace, but the default is
+// split across the deprecated append field and append_action — pin it.
 func addOriginalDstMutation(dst string, mut *extproc.HeaderMutation) {
 	mut.SetHeaders = append(mut.SetHeaders,
 		&corev3.HeaderValueOption{
+			AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			Header: &corev3.HeaderValue{
 				Key:      OriginalDstHeader,
 				RawValue: []byte(dst),

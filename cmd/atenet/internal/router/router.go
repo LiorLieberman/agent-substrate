@@ -88,7 +88,7 @@ type RouterConfig struct {
 	// SPIFFE URI SAN prefix (trust domain) instead of the dialed pod IP.
 	UpstreamSpiffePrefix string
 	LogLevel             string
-	MetricsAddr    string
+	MetricsAddr          string
 	// OtlpCollectorAddress is the host:port of the OTLP gRPC collector that
 	// Envoy reports tracing spans to. Empty disables Envoy-side tracing.
 	OtlpCollectorAddress string
