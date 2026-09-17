@@ -443,7 +443,7 @@ func validRestoreRequest() *ateletpb.RestoreRequest {
 		Spec:                  &ateletpb.WorkloadSpec{Containers: []*ateletpb.Container{{Name: "worker"}}},
 		Type:                  ateletpb.CheckpointType_CHECKPOINT_TYPE_EXTERNAL,
 		Config: &ateletpb.RestoreRequest_ExternalConfig{
-			ExternalConfig: &ateletpb.ExternalCheckpointConfiguration{
+			ExternalConfig: &ateletpb.ExternalRestoreConfiguration{
 				SnapshotUri: testSnapshotURI,
 			},
 		},
@@ -1190,7 +1190,8 @@ func TestDownloadCombinedCheckpoint(t *testing.T) {
 		goldenSnapshotURI,
 		dstDir,
 		[]string{"durable-dir.tar"},
-		[]string{"config.json", "memory-ranges", "durable-dir.tar"})
+		[]string{"config.json", "memory-ranges", "durable-dir.tar"},
+		cacheModeOff)
 	if err != nil {
 		t.Fatalf("downloadCombinedCheckpoint: %v", err)
 	}
