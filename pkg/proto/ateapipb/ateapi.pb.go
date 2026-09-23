@@ -1099,13 +1099,25 @@ type EgressPolicy struct {
 	// +k8s:subfield(atespace)=+k8s:required
 	// +k8s:customValidation # name must be "default"
 	Metadata *ResourceMetadata `protobuf:"bytes,1,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	// Rules are evaluated in order. The first matching rule decides, only that
-	// rule's effects are applied, and evaluation stops even if later rules would
-	// also match. Traffic is denied when no rule matches.
+	// Rules are an unordered set of allows. Traffic is denied when no rule
+	// matches. When more than one rule matches the same traffic, precedence
+	// MUST be given by the following criteria, in order, moving to the next one
+	// on ties:
+	//
+	//   * A matching pattern without a wildcard.
+	//   * A matching port other than "*".
+	//
+	// Two rules with the same pattern on the same port are rejected at
+	// admission.
+	//
+	// These criteria apply within a protocol and across protocols that decide
+	// on the same input, such as an https and a tls_passthrough rule that match
+	// the same SNI. Only the winning rule's effects are applied.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=256
-	// +k8s:listType=atomic # rule order matters
+	// +k8s:listType=atomic
+	// +k8s:customValidation # no two rules tie on a name and port
 	Rules         []*EgressRule `protobuf:"bytes,2,rep,name=rules,proto3" json:"rules,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1155,13 +1167,16 @@ func (x *EgressPolicy) GetRules() []*EgressRule {
 	return nil
 }
 
-// EgressRule allows traffic using exactly one protocol handler. The handler
-// fixes what the gateway matches on and when: a request, or a TLS connection
-// at its ClientHello. Traffic that fits no handler in the policy is denied.
+// EgressRule allows traffic using exactly one protocol. The protocol fixes
+// what the gateway matches on and when: a request, or a TLS connection at its
+// ClientHello. Protocols are told apart by what the Actor sends first, a TLS
+// ClientHello or an HTTP request. A connection that first sends anything
+// else, or waits for the server to speak first, is closed. Traffic that fits
+// no protocol in the policy is denied.
 type EgressRule struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Cleartext HTTP to the named hosts. Only HTTP: a TLS connection to a name
-	// that matches no other handler is refused.
+	// that matches no other protocol is refused.
 	//
 	// +k8s:optional
 	// +k8s:unionMember
@@ -1259,16 +1274,18 @@ type HTTPRule struct {
 	// +k8s:listType=set
 	// +k8s:customValidation # format
 	HostPatterns []string `protobuf:"bytes,1,rep,name=host_patterns,json=hostPatterns,proto3" json:"host_patterns,omitempty"`
-	// Destination ports. Empty means any port.
+	// Ports of the destination the Actor connected to. A port in a request's
+	// authority is neither matched nor dialed. Each entry is a decimal port
+	// number from 1 to 65535, or "*" as the only entry for any port. Empty
+	// means ["80"].
 	//
 	// +k8s:optional
 	// +k8s:maxItems=16
 	// +k8s:listType=set
-	// +k8s:eachVal=+k8s:minimum=1
-	// +k8s:eachVal=+k8s:maximum=65535
-	Ports []int32 `protobuf:"varint,2,rep,packed,name=ports,proto3" json:"ports,omitempty"`
+	// +k8s:customValidation # format
+	Ports []string `protobuf:"bytes,2,rep,name=ports,proto3" json:"ports,omitempty"`
 	// Effects do not authorize traffic. They are applied only when this is the
-	// first matching rule.
+	// deciding rule.
 	//
 	// +k8s:optional
 	Effects       *EgressRuleEffects `protobuf:"bytes,3,opt,name=effects,proto3" json:"effects,omitempty"`
@@ -1313,7 +1330,7 @@ func (x *HTTPRule) GetHostPatterns() []string {
 	return nil
 }
 
-func (x *HTTPRule) GetPorts() []int32 {
+func (x *HTTPRule) GetPorts() []string {
 	if x != nil {
 		return x.Ports
 	}
@@ -1327,12 +1344,14 @@ func (x *HTTPRule) GetEffects() *EgressRuleEffects {
 	return nil
 }
 
-// HTTPSRule allows HTTPS that the gateway intercepts. A TLS connection
-// whose SNI and port match is terminated with a leaf certificate for that
-// name issued by the gateway CA. Each request inside it is then authorized on
-// its authority, and the gateway re-originates TLS to that authority; the SNI
-// only selects the leaf. The Actor must trust the gateway CA: project it with
-// a TrustBundleDataSource named "egress-mitm.ate.dev".
+// HTTPSRule allows HTTPS that the gateway intercepts (MITM). Every Actor behind such
+// a rule must trust the gateway CA. Without it, TLS to these names fails in the
+// Actor.
+//
+// A TLS connection whose SNI and port match is terminated with a leaf
+// certificate for that name issued by the gateway CA. Each request inside it
+// is then decided on its authority, and the gateway re-originates TLS to that
+// authority; the SNI only selects the leaf.
 //
 // Interception is for HTTP. A connection that sends no SNI does not match,
 // and a non-HTTP protocol inside an intercepted connection fails.
@@ -1346,16 +1365,16 @@ type HTTPSRule struct {
 	// +k8s:listType=set
 	// +k8s:customValidation # format
 	HostPatterns []string `protobuf:"bytes,1,rep,name=host_patterns,json=hostPatterns,proto3" json:"host_patterns,omitempty"`
-	// Destination ports. Empty means any port.
+	// Ports of the destination the Actor connected to, in the format of
+	// HTTPRule.ports. Empty means ["443"].
 	//
 	// +k8s:optional
 	// +k8s:maxItems=16
 	// +k8s:listType=set
-	// +k8s:eachVal=+k8s:minimum=1
-	// +k8s:eachVal=+k8s:maximum=65535
-	Ports []int32 `protobuf:"varint,2,rep,packed,name=ports,proto3" json:"ports,omitempty"`
+	// +k8s:customValidation # format
+	Ports []string `protobuf:"bytes,2,rep,name=ports,proto3" json:"ports,omitempty"`
 	// Effects do not authorize traffic. They are applied only when this is the
-	// first matching rule.
+	// deciding rule.
 	//
 	// +k8s:optional
 	Effects       *EgressRuleEffects `protobuf:"bytes,3,opt,name=effects,proto3" json:"effects,omitempty"`
@@ -1400,7 +1419,7 @@ func (x *HTTPSRule) GetHostPatterns() []string {
 	return nil
 }
 
-func (x *HTTPSRule) GetPorts() []int32 {
+func (x *HTTPSRule) GetPorts() []string {
 	if x != nil {
 		return x.Ports
 	}
@@ -1417,9 +1436,10 @@ func (x *HTTPSRule) GetEffects() *EgressRuleEffects {
 // TLSPassthroughRule allows TLS that the gateway forwards without decryption.
 // It is evaluated once per connection at the ClientHello, on the SNI and
 // port, for any protocol carried over TLS. A connection that sends no SNI
-// does not match. Because the gateway reads nothing after the ClientHello, a
-// passthrough rule has no effects, and a policy change reaches an open
-// connection only when it ends.
+// does not match. Protocols that upgrade to TLS after a cleartext exchange
+// (STARTTLS) do not match. Because the gateway reads nothing after the
+// ClientHello, a passthrough rule has no effects, and a policy change reaches
+// an open connection only when it ends.
 type TLSPassthroughRule struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Server names matched against the SNI, in the pattern syntax of
@@ -1430,14 +1450,15 @@ type TLSPassthroughRule struct {
 	// +k8s:listType=set
 	// +k8s:customValidation # format
 	SniPatterns []string `protobuf:"bytes,1,rep,name=sni_patterns,json=sniPatterns,proto3" json:"sni_patterns,omitempty"`
-	// Destination ports. Empty means any port.
+	// Ports of the destination the Actor connected to, in the format of
+	// HTTPRule.ports. Required.
 	//
-	// +k8s:optional
+	// +k8s:required
+	// +k8s:minItems=1
 	// +k8s:maxItems=16
 	// +k8s:listType=set
-	// +k8s:eachVal=+k8s:minimum=1
-	// +k8s:eachVal=+k8s:maximum=65535
-	Ports         []int32 `protobuf:"varint,2,rep,packed,name=ports,proto3" json:"ports,omitempty"`
+	// +k8s:customValidation # format
+	Ports         []string `protobuf:"bytes,2,rep,name=ports,proto3" json:"ports,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1479,7 +1500,7 @@ func (x *TLSPassthroughRule) GetSniPatterns() []string {
 	return nil
 }
 
-func (x *TLSPassthroughRule) GetPorts() []int32 {
+func (x *TLSPassthroughRule) GetPorts() []string {
 	if x != nil {
 		return x.Ports
 	}
@@ -1503,9 +1524,9 @@ type EgressRuleEffects struct {
 	// +k8s:listMapKey=header
 	// +k8s:customUnique # case-insensitive
 	// +k8s:customValidation # for duplicate headers
-	InjectStaticHeaders []*CredentialHeaderInjection `protobuf:"bytes,1,rep,name=inject_static_headers,json=injectStaticHeaders,proto3" json:"inject_static_headers,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	ReplaceHeaders []*CredentialHeaderInjection `protobuf:"bytes,1,rep,name=replace_headers,json=replaceHeaders,proto3" json:"replace_headers,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *EgressRuleEffects) Reset() {
@@ -1538,9 +1559,9 @@ func (*EgressRuleEffects) Descriptor() ([]byte, []int) {
 	return file_ateapi_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *EgressRuleEffects) GetInjectStaticHeaders() []*CredentialHeaderInjection {
+func (x *EgressRuleEffects) GetReplaceHeaders() []*CredentialHeaderInjection {
 	if x != nil {
-		return x.InjectStaticHeaders
+		return x.ReplaceHeaders
 	}
 	return nil
 }
@@ -7432,17 +7453,17 @@ const file_ateapi_proto_rawDesc = "" +
 	"\x0ftls_passthrough\x18\x03 \x01(\v2\x1a.ateapi.TLSPassthroughRuleR\x0etlsPassthrough\"z\n" +
 	"\bHTTPRule\x12#\n" +
 	"\rhost_patterns\x18\x01 \x03(\tR\fhostPatterns\x12\x14\n" +
-	"\x05ports\x18\x02 \x03(\x05R\x05ports\x123\n" +
+	"\x05ports\x18\x02 \x03(\tR\x05ports\x123\n" +
 	"\aeffects\x18\x03 \x01(\v2\x19.ateapi.EgressRuleEffectsR\aeffects\"{\n" +
 	"\tHTTPSRule\x12#\n" +
 	"\rhost_patterns\x18\x01 \x03(\tR\fhostPatterns\x12\x14\n" +
-	"\x05ports\x18\x02 \x03(\x05R\x05ports\x123\n" +
+	"\x05ports\x18\x02 \x03(\tR\x05ports\x123\n" +
 	"\aeffects\x18\x03 \x01(\v2\x19.ateapi.EgressRuleEffectsR\aeffects\"M\n" +
 	"\x12TLSPassthroughRule\x12!\n" +
 	"\fsni_patterns\x18\x01 \x03(\tR\vsniPatterns\x12\x14\n" +
-	"\x05ports\x18\x02 \x03(\x05R\x05ports\"j\n" +
-	"\x11EgressRuleEffects\x12U\n" +
-	"\x15inject_static_headers\x18\x01 \x03(\v2!.ateapi.CredentialHeaderInjectionR\x13injectStaticHeaders\"r\n" +
+	"\x05ports\x18\x02 \x03(\tR\x05ports\"_\n" +
+	"\x11EgressRuleEffects\x12J\n" +
+	"\x0freplace_headers\x18\x01 \x03(\v2!.ateapi.CredentialHeaderInjectionR\x0ereplaceHeaders\"r\n" +
 	"\x19CredentialHeaderInjection\x12\x16\n" +
 	"\x06header\x18\x01 \x01(\tR\x06header\x12\x16\n" +
 	"\x06prefix\x18\x02 \x01(\tR\x06prefix\x12%\n" +
@@ -7988,7 +8009,7 @@ var file_ateapi_proto_depIdxs = []int32{
 	19,  // 16: ateapi.EgressRule.tls_passthrough:type_name -> ateapi.TLSPassthroughRule
 	20,  // 17: ateapi.HTTPRule.effects:type_name -> ateapi.EgressRuleEffects
 	20,  // 18: ateapi.HTTPSRule.effects:type_name -> ateapi.EgressRuleEffects
-	21,  // 19: ateapi.EgressRuleEffects.inject_static_headers:type_name -> ateapi.CredentialHeaderInjection
+	21,  // 19: ateapi.EgressRuleEffects.replace_headers:type_name -> ateapi.CredentialHeaderInjection
 	2,   // 20: ateapi.ActorStatus.state:type_name -> ateapi.ActorState
 	24,  // 21: ateapi.ActorStatus.worker_assignment:type_name -> ateapi.WorkerAssignment
 	9,   // 22: ateapi.ActorStatus.external_snapshot:type_name -> ateapi.ExternalSnapshot

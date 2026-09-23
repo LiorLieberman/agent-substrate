@@ -408,22 +408,37 @@ message EgressPolicy {
   // +k8s:customValidation # name must be "default"
   ResourceMetadata metadata = 1;
 
-  // Rules are evaluated in order. The first matching rule decides, only that
-  // rule's effects are applied, and evaluation stops even if later rules would
-  // also match. Traffic is denied when no rule matches.
+  // Rules are an unordered set of allows. Traffic is denied when no rule
+  // matches. When more than one rule matches the same traffic, precedence
+  // MUST be given by the following criteria, in order, moving to the next one
+  // on ties:
+  //
+  //   * A matching pattern without a wildcard.
+  //   * A matching port other than "*".
+  //
+  // Two rules with the same pattern on the same port are rejected at
+  // admission.
+  //
+  // These criteria apply within a protocol and across protocols that decide
+  // on the same input, such as an https and a tls_passthrough rule that match
+  // the same SNI. Only the winning rule's effects are applied.
   //
   // +k8s:optional
   // +k8s:maxItems=256
-  // +k8s:listType=atomic # rule order matters
+  // +k8s:listType=atomic
+  // +k8s:customValidation # no two rules tie on a name and port
   repeated EgressRule rules = 2;
 }
 
-// EgressRule allows traffic using exactly one protocol handler. The handler
-// fixes what the gateway matches on and when: a request, or a TLS connection
-// at its ClientHello. Traffic that fits no handler in the policy is denied.
+// EgressRule allows traffic using exactly one protocol. The protocol fixes
+// what the gateway matches on and when: a request, or a TLS connection at its
+// ClientHello. Protocols are told apart by what the Actor sends first, a TLS
+// ClientHello or an HTTP request. A connection that first sends anything
+// else, or waits for the server to speak first, is closed. Traffic that fits
+// no protocol in the policy is denied.
 message EgressRule {
   // Cleartext HTTP to the named hosts. Only HTTP: a TLS connection to a name
-  // that matches no other handler is refused.
+  // that matches no other protocol is refused.
   //
   // +k8s:optional
   // +k8s:unionMember
@@ -470,28 +485,32 @@ message HTTPRule {
   // +k8s:customValidation # format
   repeated string host_patterns = 1;
 
-  // Destination ports. Empty means any port.
+  // Ports of the destination the Actor connected to. A port in a request's
+  // authority is neither matched nor dialed. Each entry is a decimal port
+  // number from 1 to 65535, or "*" as the only entry for any port. Empty
+  // means ["80"].
   //
   // +k8s:optional
   // +k8s:maxItems=16
   // +k8s:listType=set
-  // +k8s:eachVal=+k8s:minimum=1
-  // +k8s:eachVal=+k8s:maximum=65535
-  repeated int32 ports = 2;
+  // +k8s:customValidation # format
+  repeated string ports = 2;
 
   // Effects do not authorize traffic. They are applied only when this is the
-  // first matching rule.
+  // deciding rule.
   //
   // +k8s:optional
   EgressRuleEffects effects = 3;
 }
 
-// HTTPSRule allows HTTPS that the gateway intercepts. A TLS connection
-// whose SNI and port match is terminated with a leaf certificate for that
-// name issued by the gateway CA. Each request inside it is then authorized on
-// its authority, and the gateway re-originates TLS to that authority; the SNI
-// only selects the leaf. The Actor must trust the gateway CA: project it with
-// a TrustBundleDataSource named "egress-mitm.ate.dev".
+// HTTPSRule allows HTTPS that the gateway intercepts (MITM). Every Actor behind such
+// a rule must trust the gateway CA. Without it, TLS to these names fails in the
+// Actor.
+//
+// A TLS connection whose SNI and port match is terminated with a leaf
+// certificate for that name issued by the gateway CA. Each request inside it
+// is then decided on its authority, and the gateway re-originates TLS to that
+// authority; the SNI only selects the leaf.
 //
 // Interception is for HTTP. A connection that sends no SNI does not match,
 // and a non-HTTP protocol inside an intercepted connection fails.
@@ -505,17 +524,17 @@ message HTTPSRule {
   // +k8s:customValidation # format
   repeated string host_patterns = 1;
 
-  // Destination ports. Empty means any port.
+  // Ports of the destination the Actor connected to, in the format of
+  // HTTPRule.ports. Empty means ["443"].
   //
   // +k8s:optional
   // +k8s:maxItems=16
   // +k8s:listType=set
-  // +k8s:eachVal=+k8s:minimum=1
-  // +k8s:eachVal=+k8s:maximum=65535
-  repeated int32 ports = 2;
+  // +k8s:customValidation # format
+  repeated string ports = 2;
 
   // Effects do not authorize traffic. They are applied only when this is the
-  // first matching rule.
+  // deciding rule.
   //
   // +k8s:optional
   EgressRuleEffects effects = 3;
@@ -524,9 +543,10 @@ message HTTPSRule {
 // TLSPassthroughRule allows TLS that the gateway forwards without decryption.
 // It is evaluated once per connection at the ClientHello, on the SNI and
 // port, for any protocol carried over TLS. A connection that sends no SNI
-// does not match. Because the gateway reads nothing after the ClientHello, a
-// passthrough rule has no effects, and a policy change reaches an open
-// connection only when it ends.
+// does not match. Protocols that upgrade to TLS after a cleartext exchange
+// (STARTTLS) do not match. Because the gateway reads nothing after the
+// ClientHello, a passthrough rule has no effects, and a policy change reaches
+// an open connection only when it ends.
 message TLSPassthroughRule {
   // Server names matched against the SNI, in the pattern syntax of
   // HTTPRule.host_patterns.
@@ -537,14 +557,15 @@ message TLSPassthroughRule {
   // +k8s:customValidation # format
   repeated string sni_patterns = 1;
 
-  // Destination ports. Empty means any port.
+  // Ports of the destination the Actor connected to, in the format of
+  // HTTPRule.ports. Required.
   //
-  // +k8s:optional
+  // +k8s:required
+  // +k8s:minItems=1
   // +k8s:maxItems=16
   // +k8s:listType=set
-  // +k8s:eachVal=+k8s:minimum=1
-  // +k8s:eachVal=+k8s:maximum=65535
-  repeated int32 ports = 2;
+  // +k8s:customValidation # format
+  repeated string ports = 2;
 }
 
 // EgressRuleEffects contains effects applied by a matching HTTP rule.
@@ -563,7 +584,7 @@ message EgressRuleEffects {
   // +k8s:listMapKey=header
   // +k8s:customUnique # case-insensitive
   // +k8s:customValidation # for duplicate headers
-  repeated CredentialHeaderInjection inject_static_headers = 1;
+  repeated CredentialHeaderInjection replace_headers = 1;
 }
 
 // CredentialHeaderInjection replaces the value of an HTTP request header with
