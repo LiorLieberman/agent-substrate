@@ -131,14 +131,14 @@ func (h *Handler) HandleRequestHeaders(ctx context.Context, md *extproc.RequestM
 }
 
 // handleConnect authenticates the actor behind an egress CONNECT from the
-// certificate atunnel presented, and decides the policy's address rules
-// against the original destination. Nothing the actor can write contributes
-// to the identity.
+// certificate atunnel presented, and decides the policy's tls_passthrough
+// rules against the original destination. Nothing the actor can write
+// contributes to the identity.
 //
-// Three outcomes: an address rule allows the destination, so the tunnel opens
-// and the destination goes back as dynamic metadata for the passthrough chain
-// to dial; no address rule allows it but the policy has hostname rules, so the
-// tunnel opens with nothing to dial and only a request a name rule allows can
+// Three outcomes: a passthrough rule allows the connection, so the tunnel
+// opens and the destination goes back as dynamic metadata for the passthrough
+// chain to dial; none does but the policy has http or https rules, so the
+// tunnel opens with nothing to dial and only a request one of those allows can
 // go through; neither, so the CONNECT is refused here, where there is still a
 // response.
 func (h *Handler) handleConnect(ctx context.Context, md *extproc.RequestMetadata, leg string) (extproc.Result, error) {
@@ -182,12 +182,12 @@ func (h *Handler) handleConnect(ctx context.Context, md *extproc.RequestMetadata
 	}
 
 	// This also warms the cache for the requests inside the tunnel. dest has
-	// no hostname, so only cidrs and all rules can match here.
+	// no hostname, so only a tls_passthrough rule can match here.
 	policy, err := h.lookupPolicy(ctx, leg, ref)
 	if err != nil {
 		return extproc.Result{}, err
 	}
-	decision := policy.Evaluate(dest)
+	decision := policy.EvaluateConnection(dest)
 	attrs := []any{
 		slog.Any("actor", ref),
 		slog.String("leg", leg),
@@ -196,15 +196,15 @@ func (h *Handler) handleConnect(ctx context.Context, md *extproc.RequestMetadata
 	}
 	switch {
 	case decision.Allowed:
-		slog.InfoContext(ctx, "egress tunnel opened: an address rule allows the destination", attrs...)
+		slog.InfoContext(ctx, "egress tunnel opened: a passthrough rule allows the connection", attrs...)
 		res := allow()
 		res.DynamicMetadata = passthroughDestination(dest)
 		return res, nil
-	case leg == extproc.EgressFilterChainName && policy.HasHostnameRules():
+	case leg == extproc.EgressFilterChainName && policy.HasRequestRules():
 		// Only the Envoy gateway has request legs behind this one. A dataplane
 		// that calls out for the CONNECT alone sends no chain name and is
 		// refused below.
-		slog.InfoContext(ctx, "egress tunnel opened: no address rule allows the destination, requests inside it are decided one by one", attrs...)
+		slog.InfoContext(ctx, "egress tunnel opened: no passthrough rule allows the connection, requests inside it are decided one by one", attrs...)
 		return allow(), nil
 	default:
 		slog.WarnContext(ctx, "egress denied: no rule allows the destination", attrs...)

@@ -37,7 +37,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/agent-substrate/substrate/cmd/atenet/internal/router/extproc"
@@ -207,13 +206,33 @@ func (m *egressMockClient) GetActorEgressPolicy(ctx context.Context, _ *ateapipb
 	return m.policy, nil
 }
 
+// allowAllPolicy allows cleartext HTTP to every name, and any connection the
+// gateway will not read on any port.
 func allowAllPolicy() *ateapipb.EgressPolicy {
-	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{All: &emptypb.Empty{}}}}
+	return combined(httpPolicy("*"), passthroughPolicy([]string{"*"}, "*"))
 }
 
-func hostnamesPolicy(patterns ...string) *ateapipb.EgressPolicy {
+func httpPolicy(patterns ...string) *ateapipb.EgressPolicy {
 	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{
-		Hostnames: &ateapipb.HostnameRule{Patterns: patterns},
+		Http: &ateapipb.HTTPRule{HostPatterns: patterns},
+	}}}
+}
+
+func httpPolicyOnPorts(ports []string, patterns ...string) *ateapipb.EgressPolicy {
+	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{
+		Http: &ateapipb.HTTPRule{HostPatterns: patterns, Ports: ports},
+	}}}
+}
+
+func httpsPolicy(patterns ...string) *ateapipb.EgressPolicy {
+	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{
+		Https: &ateapipb.HTTPSRule{HostPatterns: patterns},
+	}}}
+}
+
+func passthroughPolicy(ports []string, patterns ...string) *ateapipb.EgressPolicy {
+	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{
+		TlsPassthrough: &ateapipb.TLSPassthroughRule{SniPatterns: patterns, Ports: ports},
 	}}}
 }
 
@@ -293,8 +312,8 @@ func TestHandleRequestHeadersAllowsVerifiedActor(t *testing.T) {
 	if res.Target != "" {
 		t.Errorf("target = %q, want %q", res.Target, "")
 	}
-	// The all rule allows the original destination, so the passthrough chain
-	// may dial it.
+	// The passthrough rule allows the original destination, so the passthrough
+	// chain may dial it.
 	if got := passthroughDestinationOf(res); got != "93.184.216.34:80" {
 		t.Errorf("passthrough destination = %q, want the original destination", got)
 	}
@@ -306,12 +325,14 @@ func passthroughDestinationOf(res extproc.Result) string {
 	return res.DynamicMetadata.GetFields()[extproc.EgressMetadataNamespace].GetStructValue().GetFields()[extproc.EgressPassthroughDestinationKey].GetStringValue()
 }
 
-// An address match opens the tunnel and names what the passthrough chain may
-// dial; hostname rules alone open it with nothing to dial; neither refuses it.
-func TestConnectLegDecidesAddressRules(t *testing.T) {
+// A passthrough match opens the tunnel and names what the passthrough chain
+// may dial; http and https rules alone open it with nothing to dial; neither
+// refuses it. The gateway reads no ClientHello, so only a "*" pattern can
+// match here, on the dialed port.
+func TestConnectLegDecidesPassthroughRules(t *testing.T) {
 	ca := newTestCA(t, "actor-identity-ca")
 	leaf := ca.issueActorCert(t, "spiffe://substrate-actor.local/ateom-for-actor/foo/bar", actorCertOptions{})
-	both := &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{hostnamesPolicy("api.example.com").Rules[0], cidrsPolicy("93.184.216.0/24").Rules[0]}}
+	both := combined(httpPolicy("api.example.com"), passthroughPolicy([]string{"443"}, "*"))
 
 	tests := []struct {
 		name      string
@@ -320,13 +341,15 @@ func TestConnectLegDecidesAddressRules(t *testing.T) {
 		want      envoy_type.StatusCode // 0 means the tunnel opens
 		wantDial  string                // "" means no passthrough destination
 	}{
-		{name: "all", policy: allowAllPolicy(), authority: "93.184.216.34:80", wantDial: "93.184.216.34:80"},
-		{name: "address in a cidr", policy: cidrsPolicy("93.184.216.0/24"), authority: "93.184.216.34:443", wantDial: "93.184.216.34:443"},
-		{name: "ipv6 address in a cidr", policy: cidrsPolicy("2001:db8::/32"), authority: "[2001:db8::7]:5432", wantDial: "[2001:db8::7]:5432"},
-		{name: "address rule later in the policy", policy: both, authority: "93.184.216.34:443", wantDial: "93.184.216.34:443"},
-		{name: "hostname rules only defer to the request legs", policy: hostnamesPolicy("api.example.com"), authority: "93.184.216.34:443"},
-		{name: "address outside the cidr with hostname rules defers", policy: both, authority: "198.51.100.1:443"},
-		{name: "address outside the cidr and no hostname rules", policy: cidrsPolicy("203.0.113.0/24"), authority: "93.184.216.34:443", want: envoy_type.StatusCode_Forbidden},
+		{name: "any port", policy: allowAllPolicy(), authority: "93.184.216.34:80", wantDial: "93.184.216.34:80"},
+		{name: "the dialed port", policy: passthroughPolicy([]string{"443"}, "*"), authority: "93.184.216.34:443", wantDial: "93.184.216.34:443"},
+		{name: "ipv6 destination", policy: passthroughPolicy([]string{"5432"}, "*"), authority: "[2001:db8::7]:5432", wantDial: "[2001:db8::7]:5432"},
+		{name: "passthrough rule later in the policy", policy: both, authority: "93.184.216.34:443", wantDial: "93.184.216.34:443"},
+		{name: "http rules only defer to the request legs", policy: httpPolicy("api.example.com"), authority: "93.184.216.34:443"},
+		{name: "https rules only defer to the request legs", policy: httpsPolicy("api.example.com"), authority: "93.184.216.34:443"},
+		{name: "another port with request rules defers", policy: both, authority: "198.51.100.1:8443"},
+		{name: "another port and no request rules", policy: passthroughPolicy([]string{"443"}, "*"), authority: "93.184.216.34:8443", want: envoy_type.StatusCode_Forbidden},
+		{name: "a named SNI cannot be checked", policy: passthroughPolicy([]string{"443"}, "example.com"), authority: "93.184.216.34:443", want: envoy_type.StatusCode_Forbidden},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -356,11 +379,11 @@ func TestConnectLegWithoutRequestLegsFailsClosed(t *testing.T) {
 	leaf := ca.issueActorCert(t, "spiffe://substrate-actor.local/ateom-for-actor/foo/bar", actorCertOptions{})
 	certificate := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw}))
 
-	h := New(&egressMockClient{actor: runningActor(), policy: hostnamesPolicy("api.example.com")}, ca.roots(), 0, nil, "")
+	h := New(&egressMockClient{actor: runningActor(), policy: httpPolicy("api.example.com")}, ca.roots(), 0, nil, "")
 	_, err := h.HandleRequestHeaders(context.Background(), agentgatewayEgressMetadata(certificate))
 	wantStatus(t, err, envoy_type.StatusCode_Forbidden)
 
-	h = New(&egressMockClient{actor: runningActor(), policy: cidrsPolicy("93.184.216.0/24")}, ca.roots(), 0, nil, "")
+	h = New(&egressMockClient{actor: runningActor(), policy: passthroughPolicy([]string{"80"}, "*")}, ca.roots(), 0, nil, "")
 	res, err := h.HandleRequestHeaders(context.Background(), agentgatewayEgressMetadata(certificate))
 	if err != nil {
 		t.Fatalf("HandleRequestHeaders() error = %v, want the tunnel to open", err)

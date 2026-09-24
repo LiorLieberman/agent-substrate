@@ -33,11 +33,11 @@ import (
 // or HTTPS the sdsmint gateway terminated. It runs per request, because the
 // Host can change between requests on one connection.
 //
-// The rules are walked once, in policy order, over the Host the request named
-// and the address the actor dialed; the first match decides. The answer also
-// says where the request goes, so the bytes reach what the rule checked: a
-// hostname match is resolved and dialed by name, an address or all match goes
-// to the address the actor dialed.
+// A connection the CONNECT leg allowed under a passthrough rule carries the
+// address it allowed; the rule is checked again, since the policy may have
+// changed, and the request goes to that address unread. Otherwise the request
+// is decided on the Host it named, by the http rules on the cleartext leg and
+// the https rules on the MITM leg, and a match is resolved and dialed by name.
 func (h *Handler) handleRequest(ctx context.Context, md *extproc.RequestMetadata, leg string) (extproc.Result, error) {
 	ref, err := actorFromFilterState(md)
 	if err != nil {
@@ -55,10 +55,12 @@ func (h *Handler) handleRequest(ctx context.Context, md *extproc.RequestMetadata
 		return extproc.Result{}, err
 	}
 
-	decision := policy.Evaluate(dest)
-	dial := extproc.EgressDialAddress
-	if decision.ByName {
-		dial = extproc.EgressDialName
+	decision, dial := egresspolicy.Decision{RuleIndex: -1}, extproc.EgressDialName
+	if dest.IP.IsValid() {
+		decision, dial = policy.EvaluateConnection(dest), extproc.EgressDialAddress
+	}
+	if !decision.Allowed {
+		decision, dial = policy.EvaluateRequest(dest, leg == extproc.EgressTLSMITMFilterChainName), extproc.EgressDialName
 	}
 	// Built lazily: the allow path logs nothing at the default level.
 	attrs := func() []any {
@@ -98,8 +100,9 @@ func (h *Handler) handleRequest(ctx context.Context, md *extproc.RequestMetadata
 
 // requestDestination is what the request is going to: the Host, when it is a
 // DNS name, and the address the actor dialed, which the CONNECT leg's answer
-// shares as filter state when an address rule allowed it. An IP-literal Host
-// names no host, and cidrs rules match the dialed address, never the Host.
+// shares as filter state when a passthrough rule allowed it. An IP-literal
+// Host names no host, and a passthrough rule is checked against the dialed
+// address, never the Host.
 //
 // A Host header naming something other than :authority is refused rather than
 // policed on one name and dialed on the other. Envoy itself never delivers two
@@ -135,7 +138,7 @@ func requestDestination(md *extproc.RequestMetadata) (egresspolicy.Destination, 
 
 // dialedAddress is the address the actor dialed as IP:port, from the fields
 // of the ORIGINAL_DST filter state the CONNECT leg's answer set, or "" when
-// no address rule allowed it and nothing was set.
+// no passthrough rule allowed it and nothing was set.
 func dialedAddress(md *extproc.RequestMetadata) string {
 	ip := md.Attribute(extproc.OriginalDstIPAttribute)
 	if ip == "" {
