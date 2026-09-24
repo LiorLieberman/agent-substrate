@@ -148,7 +148,8 @@ kubectl ate create actor egress-demo -a ate-demo-egress --template egress
 kubectl ate resume actor egress-demo -a ate-demo-egress   # wait for ACTOR_STATE_RUNNING
 
 # 3. Allow the Actor's egress; without a policy the gateway denies everything.
-#    Cleartext HTTP to any name, and any connection the gateway does not read.
+#    Any host over cleartext HTTP on port 80, and any TLS connection on any
+#    port, forwarded without decryption.
 kubectl ate create egress-policy egress-demo -a ate-demo-egress -f - <<'EOF'
 rules:
 - http: {host_patterns: ["*"]}

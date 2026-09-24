@@ -33,6 +33,10 @@ func httpsRule(patterns ...string) *ateapipb.EgressRule {
 	return &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{HostPatterns: patterns}}
 }
 
+func httpsRuleOnPorts(ports []string, patterns ...string) *ateapipb.EgressRule {
+	return &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{HostPatterns: patterns, Ports: ports}}
+}
+
 func passthroughRule(ports []string, patterns ...string) *ateapipb.EgressRule {
 	return &ateapipb.EgressRule{TlsPassthrough: &ateapipb.TLSPassthroughRule{SniPatterns: patterns, Ports: ports}}
 }
@@ -313,9 +317,39 @@ func TestEvaluateRequest(t *testing.T) {
 			want: Decision{RuleIndex: -1},
 		},
 		{
-			name:   "ports are not enforced on a request",
+			name:   "dialed port outside the rule",
 			policy: policy(httpRuleOnPorts([]string{"8080"}, "api.example.com")),
 			dest:   Destination{Hostname: "api.example.com", Port: 80},
+			want:   Decision{RuleIndex: -1},
+		},
+		{
+			name:   "dialed port in the rule",
+			policy: policy(httpRuleOnPorts([]string{"8080"}, "api.example.com")),
+			dest:   Destination{Hostname: "api.example.com", Port: 8080},
+			want:   Decision{Allowed: true, RuleIndex: 0},
+		},
+		{
+			name:   "default http port",
+			policy: policy(httpRule("api.example.com")),
+			dest:   Destination{Hostname: "api.example.com", Port: 80},
+			want:   Decision{Allowed: true, RuleIndex: 0},
+		},
+		{
+			name:   "default https port",
+			policy: policy(httpsRule("api.example.com")),
+			dest:   Destination{Hostname: "api.example.com", Port: 443}, decrypted: true,
+			want: Decision{Allowed: true, RuleIndex: 0},
+		},
+		{
+			name:   "any port",
+			policy: policy(httpRuleOnPorts([]string{"*"}, "api.example.com")),
+			dest:   Destination{Hostname: "api.example.com", Port: 8080},
+			want:   Decision{Allowed: true, RuleIndex: 0},
+		},
+		{
+			name:   "unknown dialed port is not enforced",
+			policy: policy(httpRuleOnPorts([]string{"8080"}, "api.example.com")),
+			dest:   host("api.example.com"),
 			want:   Decision{Allowed: true, RuleIndex: 0},
 		},
 		{
@@ -408,10 +442,40 @@ func TestEvaluateConnection(t *testing.T) {
 			want:   Decision{Allowed: true, RuleIndex: 0},
 		},
 		{
-			name:   "http and https rules never decide a connection",
+			name:   "http and https rules alone never allow a connection",
 			policy: policy(httpRuleOnPorts([]string{"*"}, "*"), httpsRule("*")),
 			dest:   dialed("192.0.2.1", 443),
 			want:   Decision{RuleIndex: -1},
+		},
+		{
+			name:   "https star on its port outranks passthrough on any port",
+			policy: policy(passthroughRule([]string{"*"}, "*"), httpsRule("*")),
+			dest:   dialed("192.0.2.1", 443),
+			want:   Decision{RuleIndex: -1},
+		},
+		{
+			name:   "https star does not reach other ports",
+			policy: policy(passthroughRule([]string{"*"}, "*"), httpsRule("*")),
+			dest:   dialed("192.0.2.1", 8443),
+			want:   Decision{Allowed: true, RuleIndex: 0},
+		},
+		{
+			name:   "passthrough on its port outranks https star on any port",
+			policy: policy(httpsRuleOnPorts([]string{"*"}, "*"), passthroughRule([]string{"443"}, "*")),
+			dest:   dialed("192.0.2.1", 443),
+			want:   Decision{Allowed: true, RuleIndex: 1},
+		},
+		{
+			name:   "https star wins a tie",
+			policy: policy(passthroughRule([]string{"443"}, "*"), httpsRule("*")),
+			dest:   dialed("192.0.2.1", 443),
+			want:   Decision{RuleIndex: -1},
+		},
+		{
+			name:   "a named https pattern cannot be checked and does not outrank",
+			policy: policy(passthroughRule([]string{"*"}, "*"), httpsRule("api.example.com")),
+			dest:   dialed("192.0.2.1", 443),
+			want:   Decision{Allowed: true, RuleIndex: 0},
 		},
 		{
 			name:   "named port beats an earlier any port",

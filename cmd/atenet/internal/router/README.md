@@ -99,11 +99,16 @@ name; it is refused outright when the policy has none, and on a dataplane that
 calls out for the CONNECT alone (no chain name), which has no request leg to
 defer to.
 
-Two parts of the API are not enforced yet. The gateway does not read the
-ClientHello, so it never sees an SNI: a `tls_passthrough` rule matches only
-through a `"*"` pattern, on the dialed port, and a named SNI does not allow.
-The request legs do not see the port the actor dialed, so the `ports` of an
-`http` or `https` rule are not checked.
+The port a rule names is the one the actor dialed, never a port in the
+request's `Host`. The outer chain shares the CONNECT authority with the inner
+listener as `dev.ate.connect.authority`, and the request legs match `ports`
+against it; a dataplane that does not share it gets no port enforcement.
+
+One part of the API is not enforced yet. The gateway does not read the
+ClientHello, so it never sees an SNI: at the CONNECT only a `"*"` pattern can
+match, on the dialed port. A `tls_passthrough "*"` allows; an `https "*"` on
+a more specific port outranks it and the connection is decrypted and decided
+inside instead. A named SNI, in either kind of rule, does not allow there.
 
 Identity on the request legs is `dev.ate.actor.identity`, the actor's SPIFFE
 ID that the outer chain set from the verified peer certificate and shares with
@@ -133,7 +138,7 @@ a request are declared once, in `extproc/attributes.go`.
 | --- | --- | --- |
 | `dev.ate.actor.name` | ingress | carries the actor name across CONNECT re-entry |
 | `dev.ate.actor.atespace` | ingress | carries the atespace across CONNECT re-entry |
-| `dev.ate.connect.authority` | ingress | carries the outer CONNECT authority across re-entry for target-port selection |
+| `dev.ate.connect.authority` | ingress, egress | carries the outer CONNECT authority across re-entry: target-port selection on ingress, the dialed port the request legs match `ports` against on egress |
 | `dev.ate.actor.identity` | egress | carries the authenticated actor identity to the policy ext_proc, the logs and additional ext_proc services |
 | `dev.ate.egress:passthrough_destination` | egress | dynamic metadata: the CONNECT leg's answer, the dialed address a `tls_passthrough` rule allowed, copied into the ORIGINAL_DST filter state |
 | `dev.ate.egress:dial` | egress | dynamic metadata: a request leg's answer, `name` or `address`, which picks the route |
