@@ -436,7 +436,7 @@ message EgressPolicy {
 // The protocol fixes what the gateway matches on and when: a request, or a TLS connection at its
 // ClientHello. Any traffic that cannot be identified to a specific protocol will be dropped.
 // Protocols where the server sends first after connect are also not supported.
-// 
+//
 // Users should expect additional protocols to be supported in the future.
 message EgressRule {
   // Cleartext HTTP to the named hosts. Only HTTP: a TLS connection to a name
@@ -502,7 +502,7 @@ message HTTPRule {
   // deciding rule.
   //
   // +k8s:optional
-  EgressRuleEffects effects = 3;
+  HttpRuleEffects effects = 3;
 }
 
 // HTTPSRule allows HTTPS that the gateway intercepts (MITM). Every Actor behind such
@@ -539,7 +539,7 @@ message HTTPSRule {
   // deciding rule.
   //
   // +k8s:optional
-  EgressRuleEffects effects = 3;
+  HttpRuleEffects effects = 3;
 }
 
 // TLSPassthroughRule allows TLS that the gateway forwards without decryption.
@@ -570,10 +570,10 @@ message TLSPassthroughRule {
   repeated string ports = 2;
 }
 
-// EgressRuleEffects contains effects applied by a matching HTTP or HTTPS rule.
+// HttpRuleEffects contains effects applied by a matching HTTP or HTTPS rule.
 //
 // +k8s:customValidation # for "at least one" and duplicate headers
-message EgressRuleEffects {
+message HttpRuleEffects {
   // Replaces placeholder request headers with values retrieved from credential
   // providers. A header is replaced only when the request from the Actor
   // carries it; requests without the header are forwarded unchanged, so a

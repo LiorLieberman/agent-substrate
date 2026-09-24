@@ -1290,7 +1290,7 @@ type HTTPRule struct {
 	// deciding rule.
 	//
 	// +k8s:optional
-	Effects       *EgressRuleEffects `protobuf:"bytes,3,opt,name=effects,proto3" json:"effects,omitempty"`
+	Effects       *HttpRuleEffects `protobuf:"bytes,3,opt,name=effects,proto3" json:"effects,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1339,7 +1339,7 @@ func (x *HTTPRule) GetPorts() []string {
 	return nil
 }
 
-func (x *HTTPRule) GetEffects() *EgressRuleEffects {
+func (x *HTTPRule) GetEffects() *HttpRuleEffects {
 	if x != nil {
 		return x.Effects
 	}
@@ -1379,7 +1379,7 @@ type HTTPSRule struct {
 	// deciding rule.
 	//
 	// +k8s:optional
-	Effects       *EgressRuleEffects `protobuf:"bytes,3,opt,name=effects,proto3" json:"effects,omitempty"`
+	Effects       *HttpRuleEffects `protobuf:"bytes,3,opt,name=effects,proto3" json:"effects,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1428,7 +1428,7 @@ func (x *HTTPSRule) GetPorts() []string {
 	return nil
 }
 
-func (x *HTTPSRule) GetEffects() *EgressRuleEffects {
+func (x *HTTPSRule) GetEffects() *HttpRuleEffects {
 	if x != nil {
 		return x.Effects
 	}
@@ -1509,10 +1509,10 @@ func (x *TLSPassthroughRule) GetPorts() []string {
 	return nil
 }
 
-// EgressRuleEffects contains effects applied by a matching HTTP or HTTPS rule.
+// HttpRuleEffects contains effects applied by a matching HTTP or HTTPS rule.
 //
 // +k8s:customValidation # for "at least one" and duplicate headers
-type EgressRuleEffects struct {
+type HttpRuleEffects struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Replaces placeholder request headers with values retrieved from credential
 	// providers. A header is replaced only when the request from the Actor
@@ -1531,20 +1531,20 @@ type EgressRuleEffects struct {
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *EgressRuleEffects) Reset() {
-	*x = EgressRuleEffects{}
+func (x *HttpRuleEffects) Reset() {
+	*x = HttpRuleEffects{}
 	mi := &file_ateapi_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *EgressRuleEffects) String() string {
+func (x *HttpRuleEffects) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*EgressRuleEffects) ProtoMessage() {}
+func (*HttpRuleEffects) ProtoMessage() {}
 
-func (x *EgressRuleEffects) ProtoReflect() protoreflect.Message {
+func (x *HttpRuleEffects) ProtoReflect() protoreflect.Message {
 	mi := &file_ateapi_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1556,12 +1556,12 @@ func (x *EgressRuleEffects) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use EgressRuleEffects.ProtoReflect.Descriptor instead.
-func (*EgressRuleEffects) Descriptor() ([]byte, []int) {
+// Deprecated: Use HttpRuleEffects.ProtoReflect.Descriptor instead.
+func (*HttpRuleEffects) Descriptor() ([]byte, []int) {
 	return file_ateapi_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *EgressRuleEffects) GetReplaceHeaders() []*CredentialHeaderInjection {
+func (x *HttpRuleEffects) GetReplaceHeaders() []*CredentialHeaderInjection {
 	if x != nil {
 		return x.ReplaceHeaders
 	}
@@ -7452,19 +7452,19 @@ const file_ateapi_proto_rawDesc = "" +
 	"EgressRule\x12$\n" +
 	"\x04http\x18\x01 \x01(\v2\x10.ateapi.HTTPRuleR\x04http\x12'\n" +
 	"\x05https\x18\x02 \x01(\v2\x11.ateapi.HTTPSRuleR\x05https\x12C\n" +
-	"\x0ftls_passthrough\x18\x03 \x01(\v2\x1a.ateapi.TLSPassthroughRuleR\x0etlsPassthrough\"z\n" +
+	"\x0ftls_passthrough\x18\x03 \x01(\v2\x1a.ateapi.TLSPassthroughRuleR\x0etlsPassthrough\"x\n" +
 	"\bHTTPRule\x12#\n" +
 	"\rhost_patterns\x18\x01 \x03(\tR\fhostPatterns\x12\x14\n" +
-	"\x05ports\x18\x02 \x03(\tR\x05ports\x123\n" +
-	"\aeffects\x18\x03 \x01(\v2\x19.ateapi.EgressRuleEffectsR\aeffects\"{\n" +
+	"\x05ports\x18\x02 \x03(\tR\x05ports\x121\n" +
+	"\aeffects\x18\x03 \x01(\v2\x17.ateapi.HttpRuleEffectsR\aeffects\"y\n" +
 	"\tHTTPSRule\x12#\n" +
 	"\rhost_patterns\x18\x01 \x03(\tR\fhostPatterns\x12\x14\n" +
-	"\x05ports\x18\x02 \x03(\tR\x05ports\x123\n" +
-	"\aeffects\x18\x03 \x01(\v2\x19.ateapi.EgressRuleEffectsR\aeffects\"M\n" +
+	"\x05ports\x18\x02 \x03(\tR\x05ports\x121\n" +
+	"\aeffects\x18\x03 \x01(\v2\x17.ateapi.HttpRuleEffectsR\aeffects\"M\n" +
 	"\x12TLSPassthroughRule\x12!\n" +
 	"\fsni_patterns\x18\x01 \x03(\tR\vsniPatterns\x12\x14\n" +
-	"\x05ports\x18\x02 \x03(\tR\x05ports\"_\n" +
-	"\x11EgressRuleEffects\x12J\n" +
+	"\x05ports\x18\x02 \x03(\tR\x05ports\"]\n" +
+	"\x0fHttpRuleEffects\x12J\n" +
 	"\x0freplace_headers\x18\x01 \x03(\v2!.ateapi.CredentialHeaderInjectionR\x0ereplaceHeaders\"r\n" +
 	"\x19CredentialHeaderInjection\x12\x16\n" +
 	"\x06header\x18\x01 \x01(\tR\x06header\x12\x16\n" +
@@ -7895,7 +7895,7 @@ var file_ateapi_proto_goTypes = []any{
 	(*HTTPRule)(nil),                           // 17: ateapi.HTTPRule
 	(*HTTPSRule)(nil),                          // 18: ateapi.HTTPSRule
 	(*TLSPassthroughRule)(nil),                 // 19: ateapi.TLSPassthroughRule
-	(*EgressRuleEffects)(nil),                  // 20: ateapi.EgressRuleEffects
+	(*HttpRuleEffects)(nil),                    // 20: ateapi.HttpRuleEffects
 	(*CredentialHeaderInjection)(nil),          // 21: ateapi.CredentialHeaderInjection
 	(*ActorStatus)(nil),                        // 22: ateapi.ActorStatus
 	(*ActorCrash)(nil),                         // 23: ateapi.ActorCrash
@@ -8009,9 +8009,9 @@ var file_ateapi_proto_depIdxs = []int32{
 	17,  // 14: ateapi.EgressRule.http:type_name -> ateapi.HTTPRule
 	18,  // 15: ateapi.EgressRule.https:type_name -> ateapi.HTTPSRule
 	19,  // 16: ateapi.EgressRule.tls_passthrough:type_name -> ateapi.TLSPassthroughRule
-	20,  // 17: ateapi.HTTPRule.effects:type_name -> ateapi.EgressRuleEffects
-	20,  // 18: ateapi.HTTPSRule.effects:type_name -> ateapi.EgressRuleEffects
-	21,  // 19: ateapi.EgressRuleEffects.replace_headers:type_name -> ateapi.CredentialHeaderInjection
+	20,  // 17: ateapi.HTTPRule.effects:type_name -> ateapi.HttpRuleEffects
+	20,  // 18: ateapi.HTTPSRule.effects:type_name -> ateapi.HttpRuleEffects
+	21,  // 19: ateapi.HttpRuleEffects.replace_headers:type_name -> ateapi.CredentialHeaderInjection
 	2,   // 20: ateapi.ActorStatus.state:type_name -> ateapi.ActorState
 	24,  // 21: ateapi.ActorStatus.worker_assignment:type_name -> ateapi.WorkerAssignment
 	9,   // 22: ateapi.ActorStatus.external_snapshot:type_name -> ateapi.ExternalSnapshot
