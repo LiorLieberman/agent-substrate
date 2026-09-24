@@ -113,7 +113,7 @@ create, update or delete is visible to new requests within one TTL, and a
 deleted policy becomes a deny. Every policy denial answers a fixed
 `egress denied` body; the reason is in the sidecar's log.
 
-Credential injection (`inject_static_headers`) is not implemented yet: a
+Credential injection (`replace_headers`) is not implemented yet: a
 matched rule that declares one is denied with 501 rather than forwarded
 without the credential the policy promised.
 
