@@ -350,6 +350,10 @@ func TestConnectLegDecidesPassthroughRules(t *testing.T) {
 		{name: "another port with request rules defers", policy: both, authority: "198.51.100.1:8443"},
 		{name: "another port and no request rules", policy: passthroughPolicy([]string{"443"}, "*"), authority: "93.184.216.34:8443", want: envoy_type.StatusCode_Forbidden},
 		{name: "a named SNI cannot be checked", policy: passthroughPolicy([]string{"443"}, "example.com"), authority: "93.184.216.34:443", want: envoy_type.StatusCode_Forbidden},
+		// An https "*" rule on its port outranks a passthrough rule on any
+		// port, so the connection is decrypted and decided inside.
+		{name: "https star outranks passthrough on its port", policy: combined(httpsPolicy("*"), passthroughPolicy([]string{"*"}, "*")), authority: "93.184.216.34:443"},
+		{name: "https star does not reach other ports", policy: combined(httpsPolicy("*"), passthroughPolicy([]string{"*"}, "*")), authority: "93.184.216.34:8443", wantDial: "93.184.216.34:8443"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -17,10 +17,9 @@
 // gateway matches with, so the two cannot drift.
 //
 // The gateway does not read the ClientHello yet, so it never sees an SNI: at
-// the CONNECT it knows only the address and port the actor dialed, and the
-// request legs know only the authority. Until it does, a tls_passthrough rule
-// can match only through the "*" pattern, and the ports of an http or https
-// rule are not enforced.
+// the CONNECT it knows only the address and port the actor dialed. Until it
+// does, a tls_passthrough rule can match only through the "*" pattern, and so
+// can an https rule at that point.
 //
 // The package is pure: no I/O, no logging.
 package egresspolicy
@@ -48,7 +47,9 @@ type Destination struct {
 	Hostname string
 	// IP is the address that will be dialed, when known. Zero when unknown.
 	IP netip.Addr
-	// Port is the destination port, when known. Zero when unknown.
+	// Port is the port the actor dialed, when the leg knows it. Zero when it
+	// does not, in which case a rule's ports are not enforced. A port in a
+	// request's authority is not this.
 	Port uint16
 }
 
@@ -183,12 +184,10 @@ func (r compiledRule) matchesPort(port uint16) bool {
 }
 
 // EvaluateRequest decides one request the gateway can read, on the name in
-// its authority. decrypted selects the https rules, for a request the gateway
-// terminated TLS for; otherwise the http rules apply. An authority that is an
-// IP literal names no host and matches nothing.
-//
-// The request legs do not see the port the actor dialed, so a rule's ports
-// are not enforced here; they still break ties as the API describes.
+// its authority and the port the actor dialed. decrypted selects the https
+// rules, for a request the gateway terminated TLS for; otherwise the http
+// rules apply. An authority that is an IP literal names no host and matches
+// nothing.
 func (p *Policy) EvaluateRequest(dest Destination, decrypted bool) Decision {
 	want := protocolHTTP
 	if decrypted {
@@ -199,7 +198,7 @@ func (p *Policy) EvaluateRequest(dest Destination, decrypted bool) Decision {
 		return best
 	}
 	for i, rule := range p.rules {
-		if rule.protocol != want {
+		if rule.protocol != want || (dest.Port != 0 && !rule.matchesPort(dest.Port)) {
 			continue
 		}
 		name, ok := rule.matchName(dest.Hostname)
@@ -214,23 +213,31 @@ func (p *Policy) EvaluateRequest(dest Destination, decrypted bool) Decision {
 	return best
 }
 
-// EvaluateConnection decides a connection the gateway will not read, on the
-// port the actor dialed. Only tls_passthrough rules apply, and with no
-// ClientHello read, only their "*" pattern can match: a named SNI cannot be
-// checked, so it does not allow.
+// EvaluateConnection decides whether a connection may be forwarded unread,
+// on the port the actor dialed. With no ClientHello read, only a "*" pattern
+// can match at this point: a named SNI cannot be checked, so it does not
+// allow. A tls_passthrough rule that matches allows; an https rule that
+// matches on a more specific port outranks it, as the API describes, and the
+// connection is then not allowed here but left to the request legs, which see
+// the decrypted requests.
 func (p *Policy) EvaluateConnection(dest Destination) Decision {
 	best, bestRank := Decision{RuleIndex: -1}, matchRank{}
 	for i, rule := range p.rules {
-		if rule.protocol != protocolTLSPassthrough || !rule.matchesPort(dest.Port) {
+		if rule.protocol == protocolHTTP || !rule.matchesPort(dest.Port) {
 			continue
 		}
 		if !slices.ContainsFunc(rule.patterns, func(p HostnamePattern) bool { return p.any }) {
 			continue
 		}
 		rank := matchRank{name: rankAny, port: rule.portRank()}
-		if best.RuleIndex == -1 || rank.beats(bestRank) {
-			best, bestRank = Decision{Allowed: true, RuleIndex: i}, rank
+		// An https rule wins a tie: the same pattern on the same port is
+		// rejected at admission, and intercepting is the safer reading.
+		if best.RuleIndex == -1 || rank.beats(bestRank) || (rank == bestRank && rule.protocol == protocolHTTPS) {
+			best, bestRank = Decision{Allowed: rule.protocol == protocolTLSPassthrough, RuleIndex: i}, rank
 		}
+	}
+	if !best.Allowed {
+		return Decision{RuleIndex: -1}
 	}
 	return best
 }

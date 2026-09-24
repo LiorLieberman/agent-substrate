@@ -99,10 +99,11 @@ func (h *Handler) handleRequest(ctx context.Context, md *extproc.RequestMetadata
 }
 
 // requestDestination is what the request is going to: the Host, when it is a
-// DNS name, and the address the actor dialed, which the CONNECT leg's answer
-// shares as filter state when a passthrough rule allowed it. An IP-literal
-// Host names no host, and a passthrough rule is checked against the dialed
-// address, never the Host.
+// DNS name, and the port the actor dialed, from the CONNECT authority the
+// outer chain shares as filter state. The address the actor dialed is set
+// only when the CONNECT leg's answer named it, that is, when a passthrough
+// rule allowed the connection. An IP-literal Host names no host, and a port in
+// the Host is neither matched nor dialed.
 //
 // A Host header naming something other than :authority is refused rather than
 // policed on one name and dialed on the other. Envoy itself never delivers two
@@ -125,7 +126,14 @@ func requestDestination(md *extproc.RequestMetadata) (egresspolicy.Destination, 
 			return egresspolicy.Destination{}, fmt.Errorf("request :authority %q and Host %q name different destinations", authority, host)
 		}
 	}
-	dest := egresspolicy.Destination{Hostname: named.Hostname, Port: named.Port}
+	dest := egresspolicy.Destination{Hostname: named.Hostname}
+	if raw := md.Attribute(extproc.ConnectAuthorityFilterStateAttribute); raw != "" {
+		dialed, err := egresspolicy.NormalizeAuthority(raw)
+		if err != nil || !dialed.IP.IsValid() || dialed.Port == 0 {
+			return egresspolicy.Destination{}, fmt.Errorf("CONNECT authority %q is not an IP:port", raw)
+		}
+		dest.Port = dialed.Port
+	}
 	if raw := dialedAddress(md); raw != "" {
 		dialed, err := egresspolicy.NormalizeAuthority(raw)
 		if err != nil || !dialed.IP.IsValid() {
