@@ -20,26 +20,33 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 )
 
-// EgressAllowAll is the rule a test that is not about egress policy gives its
-// actor: the gateway denies an actor with no policy at all.
-func EgressAllowAll() *ateapipb.EgressRule {
-	return &ateapipb.EgressRule{All: &emptypb.Empty{}}
+// EgressAllowAll is what a test that is not about egress policy gives its
+// actor, since the gateway denies an actor with no policy at all: cleartext
+// HTTP to every name, and any connection the gateway forwards unread, on
+// every port. The two cannot both say every port: the same pattern on the
+// same port is a tie the API rejects.
+func EgressAllowAll() []*ateapipb.EgressRule {
+	return []*ateapipb.EgressRule{
+		{Http: &ateapipb.HTTPRule{HostPatterns: []string{"*"}}},
+		{TlsPassthrough: &ateapipb.TLSPassthroughRule{SniPatterns: []string{"*"}, Ports: []string{"*"}}},
+	}
 }
 
-// EgressAllowHostnames is a rule that lets an actor reach the hostnames
-// matching patterns (exact names, or "*." plus a name for one leftmost label).
-func EgressAllowHostnames(patterns ...string) *ateapipb.EgressRule {
-	return &ateapipb.EgressRule{Hostnames: &ateapipb.HostnameRule{Patterns: patterns}}
+// EgressAllowHTTP is a rule that lets an actor send cleartext HTTP to the
+// hosts matching patterns (exact names, or "*." plus a name for one leftmost
+// label) on port 80.
+func EgressAllowHTTP(patterns ...string) *ateapipb.EgressRule {
+	return &ateapipb.EgressRule{Http: &ateapipb.HTTPRule{HostPatterns: patterns}}
 }
 
-// EgressAllowCIDRs is a rule that lets an actor reach the addresses in cidrs.
-func EgressAllowCIDRs(cidrs ...string) *ateapipb.EgressRule {
-	return &ateapipb.EgressRule{Cidrs: &ateapipb.CIDRRule{Cidrs: cidrs}}
+// EgressAllowHTTPS is a rule that lets an actor send HTTPS, intercepted by the
+// gateway, to the hosts matching patterns on port 443.
+func EgressAllowHTTPS(patterns ...string) *ateapipb.EgressRule {
+	return &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{HostPatterns: patterns}}
 }
 
 // EnsureEgressPolicy gives actor an EgressPolicy with exactly rules, replacing

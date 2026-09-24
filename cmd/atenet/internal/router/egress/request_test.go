@@ -39,20 +39,24 @@ const (
 	testOriginalDst = "93.184.216.34:443"
 )
 
-func cidrsPolicy(cidrs ...string) *ateapipb.EgressPolicy {
-	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{
-		Cidrs: &ateapipb.CIDRRule{Cidrs: cidrs},
+func sampleEffects() *ateapipb.HttpRuleEffects {
+	return &ateapipb.HttpRuleEffects{ReplaceHeaders: []*ateapipb.CredentialHeaderInjection{{
+		Header: "authorization", Prefix: "Bearer ", CredentialUri: "ate-secret://k8s/default/token",
 	}}}
 }
 
+// credentialInjectionPolicySample is an https rule for pattern that replaces
+// the authorization header, which only the MITM leg can honor.
 func credentialInjectionPolicySample(pattern string) *ateapipb.EgressPolicy {
 	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{
-		Hostnames: &ateapipb.HostnameRule{
-			Patterns: []string{pattern},
-			Effects: &ateapipb.EgressRuleEffects{InjectStaticHeaders: []*ateapipb.CredentialHeaderInjection{{
-				Header: "authorization", Prefix: "Bearer ", CredentialUri: "ate-secret://k8s/default/token",
-			}}},
-		},
+		Https: &ateapipb.HTTPSRule{HostPatterns: []string{pattern}, Effects: sampleEffects()},
+	}}}
+}
+
+// cleartextInjectionPolicy is the same replacement on an http rule.
+func cleartextInjectionPolicy(pattern string) *ateapipb.EgressPolicy {
+	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{
+		Http: &ateapipb.HTTPRule{HostPatterns: []string{pattern}, Effects: sampleEffects()},
 	}}}
 }
 
@@ -156,44 +160,48 @@ func wantDial(t *testing.T, res extproc.Result, err error, want string) {
 	}
 }
 
-// The request legs walk the rules once, in order, over the Host the request
-// named and the address the actor dialed (testOriginalDst unless a case says
-// otherwise). The first match decides, and the answer says whether the name or
-// the dialed address is what gets dialed.
+// The cleartext leg decides on the Host the request named, by the http rules,
+// unless the address the actor dialed (testOriginalDst unless a case says
+// otherwise) is one a passthrough rule allowed, in which case the request
+// goes there unread. The answer says which of the two gets dialed.
 func TestRequestLegDecidesHostAndDialedAddress(t *testing.T) {
-	nameThenAddress := combined(hostnamesPolicy("api.example.com"), cidrsPolicy("93.184.216.0/24"))
-	addressThenName := combined(cidrsPolicy("93.184.216.0/24"), hostnamesPolicy("api.example.com"))
+	nameAndPassthrough := combined(httpPolicy("api.example.com"), passthroughPolicy([]string{"443"}, "*"))
+	passthroughAndName := combined(passthroughPolicy([]string{"443"}, "*"), httpPolicy("api.example.com"))
 	tests := []struct {
 		name      string
 		policy    *ateapipb.EgressPolicy
 		authority string
 		dialed    string                // overrides testOriginalDst
-		noDialed  bool                  // the CONNECT leg allowed nothing by address, so there is none
+		noDialed  bool                  // the CONNECT leg allowed nothing, so there is none
 		want      envoy_type.StatusCode // 0 means allowed
 		dial      string
 	}{
-		{name: "exact hostname", policy: hostnamesPolicy("api.example.com"), authority: "api.example.com", dial: extproc.EgressDialName},
-		{name: "hostname with port", policy: hostnamesPolicy("api.example.com"), authority: "api.example.com:8443", dial: extproc.EgressDialName},
-		{name: "hostname case folded", policy: hostnamesPolicy("api.example.com"), authority: "API.Example.com", dial: extproc.EgressDialName},
-		{name: "hostname with trailing dot", policy: hostnamesPolicy("api.example.com"), authority: "api.example.com.", dial: extproc.EgressDialName},
-		{name: "wildcard hostname", policy: hostnamesPolicy("*.example.com"), authority: "api.example.com", dial: extproc.EgressDialName},
-		{name: "hostname with no dialed address", policy: hostnamesPolicy("api.example.com"), authority: "api.example.com", noDialed: true, dial: extproc.EgressDialName},
-		{name: "all rule goes to the dialed address", policy: allowAllPolicy(), authority: "anything.example", dial: extproc.EgressDialAddress},
-		{name: "dialed address in a cidr, request by name", policy: cidrsPolicy("93.184.216.0/24"), authority: "evil.example", dial: extproc.EgressDialAddress},
-		{name: "dialed address in a cidr, request by ip literal", policy: cidrsPolicy("93.184.216.0/24"), authority: "203.0.113.9:8080", dial: extproc.EgressDialAddress},
-		{name: "ipv6 dialed address in a cidr", policy: cidrsPolicy("2001:db8::/32"), authority: "api.example.com", dialed: "[2001:db8::7]:443", dial: extproc.EgressDialAddress},
-		{name: "address rule first wins over a matching hostname rule", policy: addressThenName, authority: "api.example.com", dial: extproc.EgressDialAddress},
-		{name: "hostname rule first wins over a matching address rule", policy: nameThenAddress, authority: "api.example.com", dial: extproc.EgressDialName},
-		{name: "address rule first that does not match falls through to the name", policy: addressThenName, authority: "api.example.com", dialed: "198.51.100.1:443", dial: extproc.EgressDialName},
-		{name: "other hostname", policy: hostnamesPolicy("api.example.com"), authority: "evil.example", want: envoy_type.StatusCode_Forbidden},
-		{name: "wildcard does not match the apex", policy: hostnamesPolicy("*.example.com"), authority: "example.com", want: envoy_type.StatusCode_Forbidden},
-		{name: "wildcard does not match two labels", policy: hostnamesPolicy("*.example.com"), authority: "a.b.example.com", want: envoy_type.StatusCode_Forbidden},
-		{name: "ip literal host with hostname policy", policy: hostnamesPolicy("api.example.com"), authority: "93.184.216.34", want: envoy_type.StatusCode_Forbidden},
-		// The Host literal is inside the block but the actor dialed elsewhere;
-		// the dialed address is what an address rule checks.
-		{name: "host literal is not the dialed address", policy: cidrsPolicy("203.0.113.0/24"), authority: "203.0.113.9", want: envoy_type.StatusCode_Forbidden},
-		{name: "dialed address outside the cidr", policy: cidrsPolicy("203.0.113.0/24"), authority: "api.example.com", want: envoy_type.StatusCode_Forbidden},
-		{name: "no dialed address with an address-only policy", policy: cidrsPolicy("93.184.216.0/24"), authority: "api.example.com", noDialed: true, want: envoy_type.StatusCode_Forbidden},
+		{name: "exact hostname", policy: httpPolicy("api.example.com"), authority: "api.example.com", dial: extproc.EgressDialName},
+		{name: "hostname with port", policy: httpPolicy("api.example.com"), authority: "api.example.com:8443", dial: extproc.EgressDialName},
+		{name: "hostname case folded", policy: httpPolicy("api.example.com"), authority: "API.Example.com", dial: extproc.EgressDialName},
+		{name: "hostname with trailing dot", policy: httpPolicy("api.example.com"), authority: "api.example.com.", dial: extproc.EgressDialName},
+		{name: "wildcard hostname", policy: httpPolicy("*.example.com"), authority: "api.example.com", dial: extproc.EgressDialName},
+		{name: "star hostname", policy: httpPolicy("*"), authority: "anything.example", noDialed: true, dial: extproc.EgressDialName},
+		{name: "hostname with no dialed address", policy: httpPolicy("api.example.com"), authority: "api.example.com", noDialed: true, dial: extproc.EgressDialName},
+		{name: "allow-all policy goes to the dialed address", policy: allowAllPolicy(), authority: "anything.example", dial: extproc.EgressDialAddress},
+		{name: "dialed port in a passthrough rule, request by name", policy: passthroughPolicy([]string{"443"}, "*"), authority: "evil.example", dial: extproc.EgressDialAddress},
+		{name: "dialed port in a passthrough rule, request by ip literal", policy: passthroughPolicy([]string{"443"}, "*"), authority: "203.0.113.9:8080", dial: extproc.EgressDialAddress},
+		{name: "ipv6 dialed address", policy: passthroughPolicy([]string{"443"}, "*"), authority: "api.example.com", dialed: "[2001:db8::7]:443", dial: extproc.EgressDialAddress},
+		{name: "passthrough rule wins over a matching http rule", policy: nameAndPassthrough, authority: "api.example.com", dial: extproc.EgressDialAddress},
+		{name: "passthrough rule wins whatever the order", policy: passthroughAndName, authority: "api.example.com", dial: extproc.EgressDialAddress},
+		{name: "passthrough rule on another port falls through to the name", policy: passthroughAndName, authority: "api.example.com", dialed: "198.51.100.1:8443", dial: extproc.EgressDialName},
+		{name: "other hostname", policy: httpPolicy("api.example.com"), authority: "evil.example", want: envoy_type.StatusCode_Forbidden},
+		{name: "wildcard does not match the apex", policy: httpPolicy("*.example.com"), authority: "example.com", want: envoy_type.StatusCode_Forbidden},
+		{name: "wildcard does not match two labels", policy: httpPolicy("*.example.com"), authority: "a.b.example.com", want: envoy_type.StatusCode_Forbidden},
+		{name: "ip literal host with http policy", policy: httpPolicy("api.example.com"), authority: "93.184.216.34", want: envoy_type.StatusCode_Forbidden},
+		{name: "ip literal host with star", policy: httpPolicy("*"), authority: "93.184.216.34", noDialed: true, want: envoy_type.StatusCode_Forbidden},
+		{name: "https rule does not decide the cleartext leg", policy: httpsPolicy("api.example.com"), authority: "api.example.com", noDialed: true, want: envoy_type.StatusCode_Forbidden},
+		// The Host literal names a port a passthrough rule allows but the actor
+		// dialed another; the dialed port is what the rule checks.
+		{name: "host literal port is not the dialed port", policy: passthroughPolicy([]string{"8080"}, "*"), authority: "203.0.113.9:8080", want: envoy_type.StatusCode_Forbidden},
+		{name: "dialed port outside the passthrough rule", policy: passthroughPolicy([]string{"8080"}, "*"), authority: "api.example.com", want: envoy_type.StatusCode_Forbidden},
+		{name: "named SNI in a passthrough rule cannot be checked", policy: passthroughPolicy([]string{"443"}, "api.example.com"), authority: "api.example.com", want: envoy_type.StatusCode_Forbidden},
+		{name: "no dialed address with a passthrough-only policy", policy: passthroughPolicy([]string{"*"}, "*"), authority: "api.example.com", noDialed: true, want: envoy_type.StatusCode_Forbidden},
 		{name: "unparseable dialed address", policy: allowAllPolicy(), authority: "api.example.com", dialed: "not an address:443", want: envoy_type.StatusCode_Forbidden},
 		{name: "name in the dialed address field", policy: allowAllPolicy(), authority: "api.example.com", dialed: "example.com:443", want: envoy_type.StatusCode_Forbidden},
 		{name: "dialed address without a port", policy: allowAllPolicy(), authority: "api.example.com", dialed: "93.184.216.34", want: envoy_type.StatusCode_Forbidden},
@@ -203,7 +211,7 @@ func TestRequestLegDecidesHostAndDialedAddress(t *testing.T) {
 		// without the credential, not denied: the secret is never re-originated in
 		// the clear, and blocking allowed egress is worse than an unauthenticated
 		// request. See the dedicated injection tests for the TLS leg.
-		{name: "cleartext rule requires injection passes through uninjected", policy: credentialInjectionPolicySample("api.example.com"), authority: "api.example.com", dial: extproc.EgressDialName},
+		{name: "cleartext rule requires injection passes through uninjected", policy: cleartextInjectionPolicy("api.example.com"), authority: "api.example.com", dial: extproc.EgressDialName},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -227,12 +235,41 @@ func TestRequestLegDecidesHostAndDialedAddress(t *testing.T) {
 }
 
 func TestRequestLegServesBothDecryptedChains(t *testing.T) {
-	h := policyHandler(combined(hostnamesPolicy("api.example.com"), cidrsPolicy("93.184.216.0/24")))
+	h := policyHandler(combined(httpPolicy("api.example.com"), httpsPolicy("api.example.com"), passthroughPolicy([]string{"443"}, "*")))
+	noDialed := map[string]string{extproc.OriginalDstIPAttribute: "", extproc.OriginalDstPortAttribute: ""}
 	for _, leg := range []string{extproc.EgressCleartextFilterChainName, extproc.EgressTLSMITMFilterChainName} {
-		res, err := h.HandleRequestHeaders(context.Background(), innerMetadata(leg, "POST", "api.example.com", nil))
+		res, err := h.HandleRequestHeaders(context.Background(), innerMetadata(leg, "POST", "api.example.com", noDialed))
 		wantDial(t, res, err, extproc.EgressDialName)
+		_, err = h.HandleRequestHeaders(context.Background(), innerMetadata(leg, "POST", "other.example", noDialed))
+		wantStatus(t, err, envoy_type.StatusCode_Forbidden)
+		// Inside a connection the passthrough rule allowed, the name no longer
+		// matters.
 		res, err = h.HandleRequestHeaders(context.Background(), innerMetadata(leg, "POST", "other.example", nil))
 		wantDial(t, res, err, extproc.EgressDialAddress)
+	}
+}
+
+// The leg says what the actor sent: the cleartext chain is decided by the
+// http rules and the MITM chain by the https rules, never the other way.
+func TestRequestLegPicksRulesByLeg(t *testing.T) {
+	noDialed := map[string]string{extproc.OriginalDstIPAttribute: "", extproc.OriginalDstPortAttribute: ""}
+	for _, tc := range []struct {
+		policy *ateapipb.EgressPolicy
+		leg    string
+		want   envoy_type.StatusCode // 0 means allowed
+	}{
+		{policy: httpPolicy("api.example.com"), leg: extproc.EgressCleartextFilterChainName},
+		{policy: httpPolicy("api.example.com"), leg: extproc.EgressTLSMITMFilterChainName, want: envoy_type.StatusCode_Forbidden},
+		{policy: httpsPolicy("api.example.com"), leg: extproc.EgressTLSMITMFilterChainName},
+		{policy: httpsPolicy("api.example.com"), leg: extproc.EgressCleartextFilterChainName, want: envoy_type.StatusCode_Forbidden},
+	} {
+		h := policyHandler(tc.policy)
+		res, err := h.HandleRequestHeaders(context.Background(), innerMetadata(tc.leg, "GET", "api.example.com", noDialed))
+		if tc.want == 0 {
+			wantDial(t, res, err, extproc.EgressDialName)
+			continue
+		}
+		wantStatus(t, err, tc.want)
 	}
 }
 
@@ -287,7 +324,7 @@ func TestConnectLegRequiresAPolicy(t *testing.T) {
 		want   envoy_type.StatusCode // 0 means allowed
 	}{
 		{name: "policy present", client: &egressMockClient{actor: runningActor(), policy: allowAllPolicy()}},
-		{name: "hostname-only policy still opens the tunnel", client: &egressMockClient{actor: runningActor(), policy: hostnamesPolicy("api.example.com")}},
+		{name: "http-only policy still opens the tunnel", client: &egressMockClient{actor: runningActor(), policy: httpPolicy("api.example.com")}},
 		{name: "no policy", client: &egressMockClient{actor: runningActor()}, want: envoy_type.StatusCode_Forbidden},
 		{name: "policy with no rules", client: &egressMockClient{actor: runningActor(), policy: &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{}}}, want: envoy_type.StatusCode_Forbidden},
 		{name: "control plane unavailable", client: &egressMockClient{actor: runningActor(), policyErr: status.Error(codes.Unavailable, "down")}, want: envoy_type.StatusCode_ServiceUnavailable},
@@ -320,7 +357,7 @@ func TestConnectLegRequiresAPolicy(t *testing.T) {
 // resolves; a Host header that disagrees with it is refused rather than
 // trusted either way.
 func TestRequestLegRefusesAuthorityHostMismatch(t *testing.T) {
-	h := policyHandler(hostnamesPolicy("api.example.com"))
+	h := policyHandler(httpPolicy("api.example.com"))
 	md := requestMetadata("api.example.com")
 	md.Headers["host"] = "evil.example"
 	_, err := h.HandleRequestHeaders(context.Background(), md)
@@ -335,7 +372,7 @@ func TestRequestLegRefusesAuthorityHostMismatch(t *testing.T) {
 
 // A denial's body is fixed; the reason stays in the log.
 func TestDenialBodyIsUniform(t *testing.T) {
-	h := policyHandler(hostnamesPolicy("api.example.com"))
+	h := policyHandler(httpPolicy("api.example.com"))
 	for _, md := range []*extproc.RequestMetadata{
 		requestMetadata("evil.example"),
 		requestMetadata("exa mple.com"),
