@@ -73,42 +73,34 @@ name (`xds.filter_chain_name`) tells the handler which leg it is on:
 
 | Leg (filter chain) | Where | Sees | Decides |
 | --- | --- | --- | --- |
-| `egress` | outer CONNECT, both gateways | actor certificate, the `IP:port` the actor dialed | per TCP connection: identity, and the `tls_passthrough` rules for what the inner listener cannot read |
+| `egress` | outer CONNECT, both gateways | actor certificate, the `IP:port` the actor dialed | per TCP connection: identity, and that the actor has a policy with rules |
 | `egress_cleartext` | HTTP the actor sent in the clear, both gateways | `Host`, method, headers, the dialed `IP:port` | **every request**, the `http` rules |
-| `egress_tls_mitm` | TLS the sdsmint gateway terminated | same as cleartext | **every request**, the `https` rules |
+| `egress_tls_mitm` | TLS the sdsmint gateway terminated | same as cleartext, plus the connection's SNI | **every request**, the `https` rules |
 
-A request leg decides the request on its `Host`, by the `http` rules on the
-cleartext chain and the `https` rules on the MITM chain, the most specific
-match winning as the API describes. Its answer (`dev.ate.egress:dial`) also
-picks the route, so the bytes go to what the rule checked: a match is resolved
-and dialed by name through `dynamic_forward_proxy`, and a request inside a
-connection a `tls_passthrough` rule allowed goes to the dialed address through
-an `ORIGINAL_DST` cluster, unread. On the sdsmint gateway both routes
-re-originate TLS with the `Host` as SNI and verify the origin's certificate
-against it. There is no route without an answer.
-
-The CONNECT leg answers with `dev.ate.egress:passthrough_destination`, the
-dialed address when a `tls_passthrough` rule allows it. The outer chain copies
-it into the `ORIGINAL_DST` filter state shared with the inner listener, which
-is what the by-address routes and the passthrough chains (TLS the plain
-gateway does not terminate, and anything neither inspector could classify)
-dial; with no address the passthrough chains close the connection before a
-byte is relayed. A CONNECT no passthrough rule allows still opens when the
-policy has `http` or `https` rules, because a request inside may be allowed by
-name; it is refused outright when the policy has none, and on a dataplane that
-calls out for the CONNECT alone (no chain name), which has no request leg to
-defer to.
+A request leg decides the request on its `Host`, a DNS name or an IP literal,
+and the port the actor dialed: the `http` rules on the cleartext chain, the
+`https` rules on the MITM chain, the most specific match winning as the API
+describes. On the MITM chain the connection's SNI and port must fall under an
+`https` rule first, which is the half of that rule the API evaluates at the
+ClientHello. The answer (`dev.ate.egress:dial`) picks the route, and there is
+only one today: the `Host` that was policed is resolved and dialed by name
+through `dynamic_forward_proxy`, with TLS re-originated to it on the sdsmint
+gateway. There is no route without an answer.
 
 The port a rule names is the one the actor dialed, never a port in the
 request's `Host`. The outer chain shares the CONNECT authority with the inner
 listener as `dev.ate.connect.authority`, and the request legs match `ports`
 against it; a dataplane that does not share it gets no port enforcement.
 
-One part of the API is not enforced yet. The gateway does not read the
-ClientHello, so it never sees an SNI: at the CONNECT only a `"*"` pattern can
-match, on the dialed port. A `tls_passthrough "*"` allows; an `https "*"` on
-a more specific port outranks it and the connection is decrypted and decided
-inside instead. A named SNI, in either kind of rule, does not allow there.
+The CONNECT leg decides nothing about the destination yet: it opens the tunnel
+for any actor whose policy has rules, with nothing to dial, and refuses one
+without. That is the gap to the API. The gateway does not decide at the
+ClientHello, so every TLS connection is intercepted and a `tls_passthrough`
+rule matches nothing; a connection it names is decrypted and then denied
+unless an `https` rule covers it too. The `dev.ate.egress:passthrough_destination`
+answer, the `ORIGINAL_DST` filter state it feeds, and the passthrough chains
+that dial it are in place for when that decision exists; until then those
+chains close every connection.
 
 Identity on the request legs is `dev.ate.actor.identity`, the actor's SPIFFE
 ID that the outer chain set from the verified peer certificate and shares with

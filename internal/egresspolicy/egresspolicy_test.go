@@ -33,10 +33,6 @@ func httpsRule(patterns ...string) *ateapipb.EgressRule {
 	return &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{HostPatterns: patterns}}
 }
 
-func httpsRuleOnPorts(ports []string, patterns ...string) *ateapipb.EgressRule {
-	return &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{HostPatterns: patterns, Ports: ports}}
-}
-
 func passthroughRule(ports []string, patterns ...string) *ateapipb.EgressRule {
 	return &ateapipb.EgressRule{TlsPassthrough: &ateapipb.TLSPassthroughRule{SniPatterns: patterns, Ports: ports}}
 }
@@ -57,10 +53,6 @@ func mustCompile(t *testing.T, p *ateapipb.EgressPolicy) *Policy {
 func host(name string) Destination { return Destination{Hostname: name} }
 
 func addr(ip string) Destination { return Destination{IP: netip.MustParseAddr(ip)} }
-
-func dialed(ip string, port uint16) Destination {
-	return Destination{IP: netip.MustParseAddr(ip), Port: port}
-}
 
 func TestParseHostnamePattern(t *testing.T) {
 	valid := []string{
@@ -220,14 +212,6 @@ func TestCompileReportsAndDropsInvalidEntries(t *testing.T) {
 	if d := compiled.EvaluateRequest(host("bad.example.com"), false); d.Allowed {
 		t.Errorf("dropped pattern must not match, got %+v", d)
 	}
-	if d := compiled.EvaluateConnection(dialed("192.0.2.7", 443)); !d.Allowed || d.RuleIndex != 1 {
-		t.Errorf("valid port of a partly invalid rule should still match, got %+v", d)
-	}
-	// The rule with no ports can match nothing: a passthrough rule has no
-	// default port.
-	if d := compiled.EvaluateConnection(dialed("192.0.2.7", 80)); d.Allowed {
-		t.Errorf("passthrough rule without ports must not match, got %+v", d)
-	}
 }
 
 func TestEvaluateRequest(t *testing.T) {
@@ -287,9 +271,21 @@ func TestEvaluateRequest(t *testing.T) {
 			want:   Decision{Allowed: true, RuleIndex: 0},
 		},
 		{
-			name:   "a destination with no hostname matches nothing",
+			name:   "star matches an ip literal",
 			policy: policy(httpRule("*")),
-			dest:   dialed("192.0.2.1", 80),
+			dest:   Destination{IP: netip.MustParseAddr("192.0.2.1"), Port: 80},
+			want:   Decision{Allowed: true, RuleIndex: 0},
+		},
+		{
+			name:   "a name does not match an ip literal",
+			policy: policy(httpRule("example.com", "*.example.com")),
+			dest:   Destination{IP: netip.MustParseAddr("192.0.2.1"), Port: 80},
+			want:   Decision{RuleIndex: -1},
+		},
+		{
+			name:   "an empty destination matches nothing",
+			policy: policy(httpRule("*")),
+			dest:   Destination{Port: 80},
 			want:   Decision{RuleIndex: -1},
 		},
 		{
@@ -393,130 +389,6 @@ func TestEvaluateRequest(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := mustCompile(t, tc.policy).EvaluateRequest(tc.dest, tc.decrypted); got != tc.want {
 				t.Errorf("EvaluateRequest(%+v, %v) = %+v, want %+v", tc.dest, tc.decrypted, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestEvaluateConnection(t *testing.T) {
-	tests := []struct {
-		name   string
-		policy *ateapipb.EgressPolicy
-		dest   Destination
-		want   Decision
-	}{
-		{
-			name:   "no rules denies",
-			policy: policy(),
-			dest:   dialed("192.0.2.1", 443),
-			want:   Decision{RuleIndex: -1},
-		},
-		{
-			name:   "star on the dialed port",
-			policy: policy(passthroughRule([]string{"443"}, "*")),
-			dest:   dialed("192.0.2.1", 443),
-			want:   Decision{Allowed: true, RuleIndex: 0},
-		},
-		{
-			name:   "star on any port",
-			policy: policy(passthroughRule([]string{"*"}, "*")),
-			dest:   dialed("2001:db8::7", 5432),
-			want:   Decision{Allowed: true, RuleIndex: 0},
-		},
-		{
-			name:   "star on another port",
-			policy: policy(passthroughRule([]string{"443"}, "*")),
-			dest:   dialed("192.0.2.1", 8443),
-			want:   Decision{RuleIndex: -1},
-		},
-		{
-			name:   "a named SNI cannot be checked and does not allow",
-			policy: policy(passthroughRule([]string{"443"}, "example.com", "*.example.org")),
-			dest:   dialed("192.0.2.1", 443),
-			want:   Decision{RuleIndex: -1},
-		},
-		{
-			name:   "star among named patterns allows",
-			policy: policy(passthroughRule([]string{"443"}, "example.com", "*")),
-			dest:   dialed("192.0.2.1", 443),
-			want:   Decision{Allowed: true, RuleIndex: 0},
-		},
-		{
-			name:   "http and https rules alone never allow a connection",
-			policy: policy(httpRuleOnPorts([]string{"*"}, "*"), httpsRule("*")),
-			dest:   dialed("192.0.2.1", 443),
-			want:   Decision{RuleIndex: -1},
-		},
-		{
-			name:   "https star on its port outranks passthrough on any port",
-			policy: policy(passthroughRule([]string{"*"}, "*"), httpsRule("*")),
-			dest:   dialed("192.0.2.1", 443),
-			want:   Decision{RuleIndex: -1},
-		},
-		{
-			name:   "https star does not reach other ports",
-			policy: policy(passthroughRule([]string{"*"}, "*"), httpsRule("*")),
-			dest:   dialed("192.0.2.1", 8443),
-			want:   Decision{Allowed: true, RuleIndex: 0},
-		},
-		{
-			name:   "passthrough on its port outranks https star on any port",
-			policy: policy(httpsRuleOnPorts([]string{"*"}, "*"), passthroughRule([]string{"443"}, "*")),
-			dest:   dialed("192.0.2.1", 443),
-			want:   Decision{Allowed: true, RuleIndex: 1},
-		},
-		{
-			name:   "https star wins a tie",
-			policy: policy(passthroughRule([]string{"443"}, "*"), httpsRule("*")),
-			dest:   dialed("192.0.2.1", 443),
-			want:   Decision{RuleIndex: -1},
-		},
-		{
-			name:   "a named https pattern cannot be checked and does not outrank",
-			policy: policy(passthroughRule([]string{"*"}, "*"), httpsRule("api.example.com")),
-			dest:   dialed("192.0.2.1", 443),
-			want:   Decision{Allowed: true, RuleIndex: 0},
-		},
-		{
-			name:   "named port beats an earlier any port",
-			policy: policy(passthroughRule([]string{"*"}, "*"), passthroughRule([]string{"443"}, "*")),
-			dest:   dialed("192.0.2.1", 443),
-			want:   Decision{Allowed: true, RuleIndex: 1},
-		},
-		{
-			name:   "any port still allows other ports",
-			policy: policy(passthroughRule([]string{"*"}, "*"), passthroughRule([]string{"443"}, "*")),
-			dest:   dialed("192.0.2.1", 22),
-			want:   Decision{Allowed: true, RuleIndex: 0},
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := mustCompile(t, tc.policy).EvaluateConnection(tc.dest); got != tc.want {
-				t.Errorf("EvaluateConnection(%+v) = %+v, want %+v", tc.dest, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestHasRequestRules(t *testing.T) {
-	tests := []struct {
-		name   string
-		policy *ateapipb.EgressPolicy
-		want   bool
-	}{
-		{name: "no rules", policy: &ateapipb.EgressPolicy{}},
-		{name: "passthrough only", policy: policy(passthroughRule([]string{"*"}, "*"))},
-		{name: "http", policy: policy(httpRule("api.example.com")), want: true},
-		{name: "https after a passthrough", policy: policy(passthroughRule([]string{"443"}, "*"), httpsRule("*.example.com")), want: true},
-		// Every pattern was dropped at compile time, so the rule can match nothing.
-		{name: "http that did not compile", policy: policy(httpRule("not a hostname"))},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			policy, _ := Compile(tc.policy)
-			if got := policy.HasRequestRules(); got != tc.want {
-				t.Errorf("HasRequestRules() = %v, want %v", got, tc.want)
 			}
 		})
 	}

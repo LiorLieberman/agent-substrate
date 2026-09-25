@@ -206,10 +206,10 @@ func (m *egressMockClient) GetActorEgressPolicy(ctx context.Context, _ *ateapipb
 	return m.policy, nil
 }
 
-// allowAllPolicy allows cleartext HTTP to every name, and any connection the
-// gateway will not read on any port.
+// allowAllPolicy allows every name and address: cleartext HTTP on any port
+// and HTTPS on 443.
 func allowAllPolicy() *ateapipb.EgressPolicy {
-	return combined(httpPolicy("*"), passthroughPolicy([]string{"*"}, "*"))
+	return combined(httpPolicyOnPorts([]string{"*"}, "*"), httpsPolicy("*"))
 }
 
 func httpPolicy(patterns ...string) *ateapipb.EgressPolicy {
@@ -312,10 +312,10 @@ func TestHandleRequestHeadersAllowsVerifiedActor(t *testing.T) {
 	if res.Target != "" {
 		t.Errorf("target = %q, want %q", res.Target, "")
 	}
-	// The passthrough rule allows the original destination, so the passthrough
-	// chain may dial it.
-	if got := passthroughDestinationOf(res); got != "93.184.216.34:80" {
-		t.Errorf("passthrough destination = %q, want the original destination", got)
+	// Nothing is decided at the CONNECT, so the passthrough chain is given
+	// nothing to dial.
+	if got := passthroughDestinationOf(res); got != "" {
+		t.Errorf("passthrough destination = %q, want none", got)
 	}
 }
 
@@ -325,76 +325,53 @@ func passthroughDestinationOf(res extproc.Result) string {
 	return res.DynamicMetadata.GetFields()[extproc.EgressMetadataNamespace].GetStructValue().GetFields()[extproc.EgressPassthroughDestinationKey].GetStringValue()
 }
 
-// A passthrough match opens the tunnel and names what the passthrough chain
-// may dial; http and https rules alone open it with nothing to dial; neither
-// refuses it. The gateway reads no ClientHello, so only a "*" pattern can
-// match here, on the dialed port.
-func TestConnectLegDecidesPassthroughRules(t *testing.T) {
+// The CONNECT opens for any policy with rules, with nothing to dial: every
+// connection is decided on the request legs behind it. Nothing is decided
+// here yet, a tls_passthrough rule included.
+func TestConnectLegOpensForAnyRules(t *testing.T) {
 	ca := newTestCA(t, "actor-identity-ca")
 	leaf := ca.issueActorCert(t, "spiffe://substrate-actor.local/ateom-for-actor/foo/bar", actorCertOptions{})
-	both := combined(httpPolicy("api.example.com"), passthroughPolicy([]string{"443"}, "*"))
 
-	tests := []struct {
-		name      string
-		policy    *ateapipb.EgressPolicy
-		authority string
-		want      envoy_type.StatusCode // 0 means the tunnel opens
-		wantDial  string                // "" means no passthrough destination
-	}{
-		{name: "any port", policy: allowAllPolicy(), authority: "93.184.216.34:80", wantDial: "93.184.216.34:80"},
-		{name: "the dialed port", policy: passthroughPolicy([]string{"443"}, "*"), authority: "93.184.216.34:443", wantDial: "93.184.216.34:443"},
-		{name: "ipv6 destination", policy: passthroughPolicy([]string{"5432"}, "*"), authority: "[2001:db8::7]:5432", wantDial: "[2001:db8::7]:5432"},
-		{name: "passthrough rule later in the policy", policy: both, authority: "93.184.216.34:443", wantDial: "93.184.216.34:443"},
-		{name: "http rules only defer to the request legs", policy: httpPolicy("api.example.com"), authority: "93.184.216.34:443"},
-		{name: "https rules only defer to the request legs", policy: httpsPolicy("api.example.com"), authority: "93.184.216.34:443"},
-		{name: "another port with request rules defers", policy: both, authority: "198.51.100.1:8443"},
-		{name: "another port and no request rules", policy: passthroughPolicy([]string{"443"}, "*"), authority: "93.184.216.34:8443", want: envoy_type.StatusCode_Forbidden},
-		{name: "a named SNI cannot be checked", policy: passthroughPolicy([]string{"443"}, "example.com"), authority: "93.184.216.34:443", want: envoy_type.StatusCode_Forbidden},
-		// An https "*" rule on its port outranks a passthrough rule on any
-		// port, so the connection is decrypted and decided inside.
-		{name: "https star outranks passthrough on its port", policy: combined(httpsPolicy("*"), passthroughPolicy([]string{"*"}, "*")), authority: "93.184.216.34:443"},
-		{name: "https star does not reach other ports", policy: combined(httpsPolicy("*"), passthroughPolicy([]string{"*"}, "*")), authority: "93.184.216.34:8443", wantDial: "93.184.216.34:8443"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			h := New(&egressMockClient{actor: runningActor(), policy: tc.policy}, ca.roots(), 0, nil, "")
+	for name, policy := range map[string]*ateapipb.EgressPolicy{
+		"http":            httpPolicy("api.example.com"),
+		"https":           httpsPolicy("api.example.com"),
+		"tls passthrough": passthroughPolicy([]string{"443"}, "*"),
+		"allow all":       allowAllPolicy(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := New(&egressMockClient{actor: runningActor(), policy: policy}, ca.roots(), 0, nil, "")
 			md := egressMetadata(xfccHeader(leaf))
-			md.Host = tc.authority
-			md.Headers[":authority"] = tc.authority
+			md.Host = "93.184.216.34:443"
+			md.Headers[":authority"] = md.Host
 			res, err := h.HandleRequestHeaders(context.Background(), md)
-			if tc.want != 0 {
-				wantStatus(t, err, tc.want)
-				return
-			}
 			if err != nil {
 				t.Fatalf("HandleRequestHeaders() error = %v, want the tunnel to open", err)
 			}
-			if got := passthroughDestinationOf(res); got != tc.wantDial {
-				t.Errorf("passthrough destination = %q, want %q", got, tc.wantDial)
+			if got := passthroughDestinationOf(res); got != "" {
+				t.Errorf("passthrough destination = %q, want none", got)
 			}
 		})
 	}
 }
 
-// A dataplane that calls out for the CONNECT alone has no request legs to
-// defer to, so a policy that could only allow by name allows nothing there.
-func TestConnectLegWithoutRequestLegsFailsClosed(t *testing.T) {
+// A callout with no filter chain name gets the same answer: the tunnel opens
+// with nothing to dial, and an actor without a policy is refused.
+func TestConnectLegWithoutRequestLegs(t *testing.T) {
 	ca := newTestCA(t, "actor-identity-ca")
 	leaf := ca.issueActorCert(t, "spiffe://substrate-actor.local/ateom-for-actor/foo/bar", actorCertOptions{})
 	certificate := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw}))
 
 	h := New(&egressMockClient{actor: runningActor(), policy: httpPolicy("api.example.com")}, ca.roots(), 0, nil, "")
-	_, err := h.HandleRequestHeaders(context.Background(), agentgatewayEgressMetadata(certificate))
-	wantStatus(t, err, envoy_type.StatusCode_Forbidden)
-
-	h = New(&egressMockClient{actor: runningActor(), policy: passthroughPolicy([]string{"80"}, "*")}, ca.roots(), 0, nil, "")
 	res, err := h.HandleRequestHeaders(context.Background(), agentgatewayEgressMetadata(certificate))
 	if err != nil {
 		t.Fatalf("HandleRequestHeaders() error = %v, want the tunnel to open", err)
 	}
-	if got := passthroughDestinationOf(res); got != "93.184.216.34:80" {
-		t.Errorf("passthrough destination = %q, want the original destination", got)
+	if got := passthroughDestinationOf(res); got != "" {
+		t.Errorf("passthrough destination = %q, want none", got)
 	}
+	h = New(&egressMockClient{actor: runningActor()}, ca.roots(), 0, nil, "")
+	_, err = h.HandleRequestHeaders(context.Background(), agentgatewayEgressMetadata(certificate))
+	wantStatus(t, err, envoy_type.StatusCode_Forbidden)
 }
 
 func TestHandleRequestHeadersAllowsAgentgatewayCertificateAttribute(t *testing.T) {

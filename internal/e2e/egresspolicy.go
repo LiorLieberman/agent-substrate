@@ -25,14 +25,14 @@ import (
 )
 
 // EgressAllowAll is what a test that is not about egress policy gives its
-// actor, since the gateway denies an actor with no policy at all: cleartext
-// HTTP to every name, and any connection the gateway forwards unread, on
-// every port. The two cannot both say every port: the same pattern on the
-// same port is a tie the API rejects.
+// actor, since the gateway denies an actor with no policy at all: every name
+// and address, as cleartext HTTP on any port and as intercepted HTTPS on 443.
+// TLS forwarded unread is not decided by the gateway yet, and a passthrough
+// rule on every port would tie with the http rule, which the API rejects.
 func EgressAllowAll() []*ateapipb.EgressRule {
 	return []*ateapipb.EgressRule{
-		{Http: &ateapipb.HTTPRule{HostPatterns: []string{"*"}}},
-		{TlsPassthrough: &ateapipb.TLSPassthroughRule{SniPatterns: []string{"*"}, Ports: []string{"*"}}},
+		{Http: &ateapipb.HTTPRule{HostPatterns: []string{"*"}, Ports: []string{"*"}}},
+		{Https: &ateapipb.HTTPSRule{HostPatterns: []string{"*"}}},
 	}
 }
 
