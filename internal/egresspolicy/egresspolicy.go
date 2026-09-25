@@ -16,10 +16,10 @@
 // destination. ateapi validates patterns and ports with the same parsers the
 // gateway matches with, so the two cannot drift.
 //
-// The gateway does not read the ClientHello yet, so it never sees an SNI: at
-// the CONNECT it knows only the address and port the actor dialed. Until it
-// does, a tls_passthrough rule can match only through the "*" pattern, and so
-// can an https rule at that point.
+// The gateway does not decide at the ClientHello yet: every TLS connection is
+// intercepted, and a tls_passthrough rule matches nothing until it does. The
+// rules are decided per request, on the authority, plus the SNI of the
+// connection for https.
 //
 // The package is pure: no I/O, no logging.
 package egresspolicy
@@ -38,14 +38,15 @@ import (
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 )
 
-// Destination is what a request or connection is going to, as far as the leg
-// evaluating it can tell. A request the gateway can read has the Hostname it
-// named, when that is a DNS name; a connection has only IP and Port.
+// Destination is what a request is going to, as far as the leg evaluating it
+// can tell: the Hostname it named, or the IP when it named a literal, and the
+// port the actor dialed.
 type Destination struct {
 	// Hostname is the normalized DNS name: lowercase ASCII, no trailing dot.
 	// Empty when the destination was not named by a hostname.
 	Hostname string
-	// IP is the address that will be dialed, when known. Zero when unknown.
+	// IP is the address named instead of a hostname, when it was. Only the
+	// "*" pattern matches it.
 	IP netip.Addr
 	// Port is the port the actor dialed, when the leg knows it. Zero when it
 	// does not, in which case a rule's ports are not enforced. A port in a
@@ -163,45 +164,25 @@ func Compile(policy *ateapipb.EgressPolicy) (*Policy, []error) {
 // A policy with no rules can authorize nothing.
 func (p *Policy) RuleCount() int { return len(p.rules) }
 
-// HasRequestRules reports whether any rule can match a request. A decision
-// point that sees only an address needs this before refusing a connection
-// whose requests might still be allowed by name.
-func (p *Policy) HasRequestRules() bool {
-	for _, rule := range p.rules {
-		if rule.decidesRequests() && len(rule.patterns) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func (r compiledRule) decidesRequests() bool {
-	return r.protocol == protocolHTTP || r.protocol == protocolHTTPS
-}
-
 func (r compiledRule) matchesPort(port uint16) bool {
 	return r.anyPort || slices.Contains(r.ports, port)
 }
 
-// EvaluateRequest decides one request the gateway can read, on the name in
-// its authority and the port the actor dialed. decrypted selects the https
-// rules, for a request the gateway terminated TLS for; otherwise the http
-// rules apply. An authority that is an IP literal names no host and matches
-// nothing.
+// EvaluateRequest decides one request the gateway can read, on the name or
+// address in its authority and the port the actor dialed. decrypted selects
+// the https rules, for a request the gateway terminated TLS for; otherwise
+// the http rules apply. A tls_passthrough rule never decides a request.
 func (p *Policy) EvaluateRequest(dest Destination, decrypted bool) Decision {
 	want := protocolHTTP
 	if decrypted {
 		want = protocolHTTPS
 	}
 	best, bestRank := Decision{RuleIndex: -1}, matchRank{}
-	if dest.Hostname == "" {
-		return best
-	}
 	for i, rule := range p.rules {
 		if rule.protocol != want || (dest.Port != 0 && !rule.matchesPort(dest.Port)) {
 			continue
 		}
-		name, ok := rule.matchName(dest.Hostname)
+		name, ok := rule.matchName(dest)
 		if !ok {
 			continue
 		}
@@ -213,41 +194,12 @@ func (p *Policy) EvaluateRequest(dest Destination, decrypted bool) Decision {
 	return best
 }
 
-// EvaluateConnection decides whether a connection may be forwarded unread,
-// on the port the actor dialed. With no ClientHello read, only a "*" pattern
-// can match at this point: a named SNI cannot be checked, so it does not
-// allow. A tls_passthrough rule that matches allows; an https rule that
-// matches on a more specific port outranks it, as the API describes, and the
-// connection is then not allowed here but left to the request legs, which see
-// the decrypted requests.
-func (p *Policy) EvaluateConnection(dest Destination) Decision {
-	best, bestRank := Decision{RuleIndex: -1}, matchRank{}
-	for i, rule := range p.rules {
-		if rule.protocol == protocolHTTP || !rule.matchesPort(dest.Port) {
-			continue
-		}
-		if !slices.ContainsFunc(rule.patterns, func(p HostnamePattern) bool { return p.any }) {
-			continue
-		}
-		rank := matchRank{name: rankAny, port: rule.portRank()}
-		// An https rule wins a tie: the same pattern on the same port is
-		// rejected at admission, and intercepting is the safer reading.
-		if best.RuleIndex == -1 || rank.beats(bestRank) || (rank == bestRank && rule.protocol == protocolHTTPS) {
-			best, bestRank = Decision{Allowed: rule.protocol == protocolTLSPassthrough, RuleIndex: i}, rank
-		}
-	}
-	if !best.Allowed {
-		return Decision{RuleIndex: -1}
-	}
-	return best
-}
-
-// matchName reports whether any pattern matches hostname, and how specific
-// the best one is.
-func (r compiledRule) matchName(hostname string) (int, bool) {
+// matchName reports whether any pattern matches dest, and how specific the
+// best one is. A destination named by an IP literal is matched by "*" alone.
+func (r compiledRule) matchName(dest Destination) (int, bool) {
 	best, found := 0, false
 	for _, pattern := range r.patterns {
-		if !pattern.Matches(hostname) {
+		if !pattern.Matches(dest.Hostname) && !(pattern.any && dest.IP.IsValid()) {
 			continue
 		}
 		if rank := pattern.rank(); !found || rank < best {
@@ -286,7 +238,8 @@ func (m matchRank) beats(o matchRank) bool {
 }
 
 // HostnamePattern is one parsed host or SNI pattern: an exact name, a
-// wildcard standing in for the whole leftmost label, or "*" for every name.
+// wildcard standing in for the whole leftmost label, or "*" for every name
+// and every address.
 type HostnamePattern struct {
 	// name is the exact name, or the suffix after "*." for a wildcard.
 	name     string
