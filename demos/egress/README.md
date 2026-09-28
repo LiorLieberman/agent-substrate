@@ -152,8 +152,8 @@ kubectl ate resume actor egress-demo -a ate-demo-egress   # wait for ACTOR_STATE
 #    intercepted by the gateway.
 kubectl ate create egress-policy egress-demo -a ate-demo-egress -f - <<'EOF'
 rules:
-- http: {host_patterns: ["*"], ports: ["*"]}
-- https: {host_patterns: ["*"]}
+- http: {hostnames: ["*"], ports: {all: {}}}
+- https: {hostnames: ["*"]}
 EOF
 
 # 4. Drive the Actor's egress through the ingress gateway. The gateway caches a

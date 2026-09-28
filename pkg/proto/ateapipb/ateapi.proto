@@ -439,8 +439,8 @@ message EgressPolicy {
 //
 // Users should expect additional protocols to be supported in the future.
 message EgressRule {
-  // Cleartext HTTP/1.1 to the named hosts. TLS to these names is not allowed
-  // by this rule.
+  // Cleartext HTTP to the named hosts: HTTP/1.1, and h2c as used by gRPC.
+  // TLS to these names is not allowed by this rule.
   //
   // +k8s:optional
   // +k8s:unionMember

@@ -1127,8 +1127,8 @@ func (x *EgressPolicy) GetRules() []*EgressRule {
 // Users should expect additional protocols to be supported in the future.
 type EgressRule struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Cleartext HTTP/1.1 to the named hosts. TLS to these names is not allowed
-	// by this rule.
+	// Cleartext HTTP to the named hosts: HTTP/1.1, and h2c as used by gRPC.
+	// TLS to these names is not allowed by this rule.
 	//
 	// +k8s:optional
 	// +k8s:unionMember

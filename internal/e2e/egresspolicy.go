@@ -31,8 +31,8 @@ import (
 // rule on every port would tie with the http rule, which the API rejects.
 func EgressAllowAll() []*ateapipb.EgressRule {
 	return []*ateapipb.EgressRule{
-		{Http: &ateapipb.HTTPRule{HostPatterns: []string{"*"}, Ports: []string{"*"}}},
-		{Https: &ateapipb.HTTPSRule{HostPatterns: []string{"*"}}},
+		{Http: &ateapipb.HTTPRule{Hostnames: []string{"*"}, Ports: &ateapipb.Ports{All: &ateapipb.AllPorts{}}}},
+		{Https: &ateapipb.HTTPSRule{Hostnames: []string{"*"}}},
 	}
 }
 
@@ -40,13 +40,13 @@ func EgressAllowAll() []*ateapipb.EgressRule {
 // hosts matching patterns (exact names, or "*." plus a name for one leftmost
 // label) on port 80.
 func EgressAllowHTTP(patterns ...string) *ateapipb.EgressRule {
-	return &ateapipb.EgressRule{Http: &ateapipb.HTTPRule{HostPatterns: patterns}}
+	return &ateapipb.EgressRule{Http: &ateapipb.HTTPRule{Hostnames: patterns}}
 }
 
 // EgressAllowHTTPS is a rule that lets an actor send HTTPS, intercepted by the
 // gateway, to the hosts matching patterns on port 443.
 func EgressAllowHTTPS(patterns ...string) *ateapipb.EgressRule {
-	return &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{HostPatterns: patterns}}
+	return &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{Hostnames: patterns}}
 }
 
 // EnsureEgressPolicy gives actor an EgressPolicy with exactly rules, replacing

@@ -22,20 +22,24 @@ import (
 )
 
 func httpRule(patterns ...string) *ateapipb.EgressRule {
-	return &ateapipb.EgressRule{Http: &ateapipb.HTTPRule{HostPatterns: patterns}}
+	return &ateapipb.EgressRule{Http: &ateapipb.HTTPRule{Hostnames: patterns}}
 }
 
-func httpRuleOnPorts(ports []string, patterns ...string) *ateapipb.EgressRule {
-	return &ateapipb.EgressRule{Http: &ateapipb.HTTPRule{HostPatterns: patterns, Ports: ports}}
+func httpRuleOnPorts(ports *ateapipb.Ports, patterns ...string) *ateapipb.EgressRule {
+	return &ateapipb.EgressRule{Http: &ateapipb.HTTPRule{Hostnames: patterns, Ports: ports}}
 }
 
 func httpsRule(patterns ...string) *ateapipb.EgressRule {
-	return &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{HostPatterns: patterns}}
+	return &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{Hostnames: patterns}}
 }
 
-func passthroughRule(ports []string, patterns ...string) *ateapipb.EgressRule {
-	return &ateapipb.EgressRule{TlsPassthrough: &ateapipb.TLSPassthroughRule{SniPatterns: patterns, Ports: ports}}
+func passthroughRule(ports *ateapipb.Ports, patterns ...string) *ateapipb.EgressRule {
+	return &ateapipb.EgressRule{TlsPassthrough: &ateapipb.TLSPassthroughRule{Hostnames: patterns, Ports: ports}}
 }
+
+func ports(numbers ...int32) *ateapipb.Ports { return &ateapipb.Ports{Numbers: numbers} }
+
+func allPorts() *ateapipb.Ports { return &ateapipb.Ports{All: &ateapipb.AllPorts{}} }
 
 func policy(rules ...*ateapipb.EgressRule) *ateapipb.EgressPolicy {
 	return &ateapipb.EgressPolicy{Rules: rules}
@@ -134,19 +138,6 @@ func TestHostnamePatternMatches(t *testing.T) {
 	}
 }
 
-func TestParsePort(t *testing.T) {
-	for raw, want := range map[string]uint16{"1": 1, "80": 80, "8443": 8443, "65535": 65535} {
-		if got, err := ParsePort(raw); err != nil || got != want {
-			t.Errorf("ParsePort(%q) = %d, %v; want %d", raw, got, err, want)
-		}
-	}
-	for _, raw := range []string{"", "0", "65536", "080", "+80", "-1", " 80", "80 ", "http", "*", "8_0", "0x50"} {
-		if got, err := ParsePort(raw); err == nil {
-			t.Errorf("ParsePort(%q) = %d, want error", raw, got)
-		}
-	}
-}
-
 func TestNormalizeAuthority(t *testing.T) {
 	tests := []struct {
 		authority string
@@ -197,7 +188,7 @@ func TestNormalizeAuthority(t *testing.T) {
 func TestCompileReportsAndDropsInvalidEntries(t *testing.T) {
 	compiled, errs := Compile(policy(
 		httpRule("good.example.com", "BAD.example.com"),
-		passthroughRule([]string{"443", "eighty"}, "*"),
+		passthroughRule(ports(443, 0), "*"),
 		passthroughRule(nil, "*"),
 	))
 	if len(errs) != 3 {
@@ -216,15 +207,15 @@ func TestCompileReportsAndDropsInvalidEntries(t *testing.T) {
 
 func TestEvaluateRequest(t *testing.T) {
 	effects := &ateapipb.HttpRuleEffects{
-		ReplaceHeaders: []*ateapipb.CredentialHeaderInjection{{
+		ReplaceHeaders: []*ateapipb.CredentialHeader{{
 			Header:        "authorization",
 			Prefix:        "Bearer ",
 			CredentialUri: "ate-secret://k8s/default/token",
 		}},
 	}
 	withEffects := &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{
-		HostPatterns: []string{"api.example.com"},
-		Effects:      effects,
+		Hostnames: []string{"api.example.com"},
+		Effects:   effects,
 	}}
 
 	tests := []struct {
@@ -308,19 +299,19 @@ func TestEvaluateRequest(t *testing.T) {
 		},
 		{
 			name:   "passthrough rule never decides a request",
-			policy: policy(passthroughRule([]string{"*"}, "*")),
+			policy: policy(passthroughRule(allPorts(), "*")),
 			dest:   host("api.example.com"), decrypted: true,
 			want: Decision{RuleIndex: -1},
 		},
 		{
 			name:   "dialed port outside the rule",
-			policy: policy(httpRuleOnPorts([]string{"8080"}, "api.example.com")),
+			policy: policy(httpRuleOnPorts(ports(8080), "api.example.com")),
 			dest:   Destination{Hostname: "api.example.com", Port: 80},
 			want:   Decision{RuleIndex: -1},
 		},
 		{
 			name:   "dialed port in the rule",
-			policy: policy(httpRuleOnPorts([]string{"8080"}, "api.example.com")),
+			policy: policy(httpRuleOnPorts(ports(8080), "api.example.com")),
 			dest:   Destination{Hostname: "api.example.com", Port: 8080},
 			want:   Decision{Allowed: true, RuleIndex: 0},
 		},
@@ -338,13 +329,13 @@ func TestEvaluateRequest(t *testing.T) {
 		},
 		{
 			name:   "any port",
-			policy: policy(httpRuleOnPorts([]string{"*"}, "api.example.com")),
+			policy: policy(httpRuleOnPorts(allPorts(), "api.example.com")),
 			dest:   Destination{Hostname: "api.example.com", Port: 8080},
 			want:   Decision{Allowed: true, RuleIndex: 0},
 		},
 		{
 			name:   "unknown dialed port is not enforced",
-			policy: policy(httpRuleOnPorts([]string{"8080"}, "api.example.com")),
+			policy: policy(httpRuleOnPorts(ports(8080), "api.example.com")),
 			dest:   host("api.example.com"),
 			want:   Decision{Allowed: true, RuleIndex: 0},
 		},
@@ -362,13 +353,13 @@ func TestEvaluateRequest(t *testing.T) {
 		},
 		{
 			name:   "named port beats an earlier any port on the same pattern",
-			policy: policy(httpRuleOnPorts([]string{"*"}, "api.example.com"), httpRuleOnPorts([]string{"80"}, "api.example.com")),
+			policy: policy(httpRuleOnPorts(allPorts(), "api.example.com"), httpRuleOnPorts(ports(80), "api.example.com")),
 			dest:   host("api.example.com"),
 			want:   Decision{Allowed: true, RuleIndex: 1},
 		},
 		{
 			name:   "name specificity outranks port specificity",
-			policy: policy(httpRuleOnPorts([]string{"80"}, "*.example.com"), httpRuleOnPorts([]string{"*"}, "api.example.com")),
+			policy: policy(httpRuleOnPorts(ports(80), "*.example.com"), httpRuleOnPorts(allPorts(), "api.example.com")),
 			dest:   host("api.example.com"),
 			want:   Decision{Allowed: true, RuleIndex: 1},
 		},

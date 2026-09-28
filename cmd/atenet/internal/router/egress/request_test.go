@@ -43,7 +43,7 @@ func testDialed(leg string) string {
 }
 
 func sampleEffects() *ateapipb.HttpRuleEffects {
-	return &ateapipb.HttpRuleEffects{ReplaceHeaders: []*ateapipb.CredentialHeaderInjection{{
+	return &ateapipb.HttpRuleEffects{ReplaceHeaders: []*ateapipb.CredentialHeader{{
 		Header: "authorization", Prefix: "Bearer ", CredentialUri: "ate-secret://k8s/default/token",
 	}}}
 }
@@ -52,14 +52,14 @@ func sampleEffects() *ateapipb.HttpRuleEffects {
 // the authorization header, which only the MITM leg can honor.
 func credentialInjectionPolicySample(pattern string) *ateapipb.EgressPolicy {
 	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{
-		Https: &ateapipb.HTTPSRule{HostPatterns: []string{pattern}, Effects: sampleEffects()},
+		Https: &ateapipb.HTTPSRule{Hostnames: []string{pattern}, Effects: sampleEffects()},
 	}}}
 }
 
 // cleartextInjectionPolicy is the same replacement on an http rule.
 func cleartextInjectionPolicy(pattern string) *ateapipb.EgressPolicy {
 	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{
-		Http: &ateapipb.HTTPRule{HostPatterns: []string{pattern}, Effects: sampleEffects()},
+		Http: &ateapipb.HTTPRule{Hostnames: []string{pattern}, Effects: sampleEffects()},
 	}}}
 }
 
@@ -178,16 +178,16 @@ func TestRequestLegDecidesHostAndDialedPort(t *testing.T) {
 		{name: "wildcard hostname", policy: httpPolicy("*.example.com"), authority: "api.example.com"},
 		{name: "star hostname", policy: httpPolicy("*"), authority: "anything.example"},
 		{name: "star matches an ip literal", policy: httpPolicy("*"), authority: "93.184.216.34"},
-		{name: "star matches an ip literal with a port", policy: httpPolicyOnPorts([]string{"8080"}, "*"), authority: "203.0.113.9:8080", attrs: dialed("203.0.113.9:8080")},
+		{name: "star matches an ip literal with a port", policy: httpPolicyOnPorts(ports(8080), "*"), authority: "203.0.113.9:8080", attrs: dialed("203.0.113.9:8080")},
 		{name: "star matches an ipv6 literal", policy: httpPolicy("*"), authority: "[2001:db8::7]"},
 		{name: "allow-all policy", policy: allowAllPolicy(), authority: "anything.example"},
 		// The port in the Host is neither matched nor dialed; the dialed port is.
 		{name: "host port is ignored, dialed port matches", policy: httpPolicy("api.example.com"), authority: "api.example.com:8443"},
 		{name: "host port is ignored, dialed port does not match", policy: httpPolicy("api.example.com"), authority: "api.example.com:80", attrs: dialed("93.184.216.34:8080"), want: envoy_type.StatusCode_Forbidden},
-		{name: "dialed port in the http rule", policy: httpPolicyOnPorts([]string{"8080"}, "api.example.com"), authority: "api.example.com", attrs: dialed("93.184.216.34:8080")},
+		{name: "dialed port in the http rule", policy: httpPolicyOnPorts(ports(8080), "api.example.com"), authority: "api.example.com", attrs: dialed("93.184.216.34:8080")},
 		{name: "dialed port outside the http rule", policy: httpPolicy("api.example.com"), authority: "api.example.com", attrs: dialed("93.184.216.34:8080"), want: envoy_type.StatusCode_Forbidden},
-		{name: "any port in the http rule", policy: httpPolicyOnPorts([]string{"*"}, "api.example.com"), authority: "api.example.com", attrs: dialed("93.184.216.34:8080")},
-		{name: "no CONNECT authority leaves ports unenforced", policy: httpPolicyOnPorts([]string{"8080"}, "api.example.com"), authority: "api.example.com", noAuthority: true},
+		{name: "any port in the http rule", policy: httpPolicyOnPorts(allPorts(), "api.example.com"), authority: "api.example.com", attrs: dialed("93.184.216.34:8080")},
+		{name: "no CONNECT authority leaves ports unenforced", policy: httpPolicyOnPorts(ports(8080), "api.example.com"), authority: "api.example.com", noAuthority: true},
 		{name: "unparseable CONNECT authority", policy: httpPolicy("api.example.com"), authority: "api.example.com", attrs: dialed("not an address:80"), want: envoy_type.StatusCode_Forbidden},
 		{name: "name in the CONNECT authority", policy: httpPolicy("api.example.com"), authority: "api.example.com", attrs: dialed("example.com:80"), want: envoy_type.StatusCode_Forbidden},
 		{name: "CONNECT authority without a port", policy: httpPolicy("api.example.com"), authority: "api.example.com", attrs: dialed("93.184.216.34"), want: envoy_type.StatusCode_Forbidden},
@@ -198,7 +198,7 @@ func TestRequestLegDecidesHostAndDialedPort(t *testing.T) {
 		{name: "https rule does not decide the cleartext leg", policy: httpsPolicy("api.example.com"), authority: "api.example.com", want: envoy_type.StatusCode_Forbidden},
 		// A passthrough rule decides nothing until the gateway decides at the
 		// ClientHello; cleartext is never under it in any case.
-		{name: "passthrough rule does not decide the cleartext leg", policy: passthroughPolicy([]string{"*"}, "*"), authority: "api.example.com", want: envoy_type.StatusCode_Forbidden},
+		{name: "passthrough rule does not decide the cleartext leg", policy: passthroughPolicy(allPorts(), "*"), authority: "api.example.com", want: envoy_type.StatusCode_Forbidden},
 		{name: "unparseable host", policy: allowAllPolicy(), authority: "exa mple.com", want: envoy_type.StatusCode_Forbidden},
 		{name: "empty host", policy: allowAllPolicy(), authority: "", want: envoy_type.StatusCode_Forbidden},
 		// On the cleartext leg a rule that requires injection is let through
@@ -244,7 +244,7 @@ func TestMITMLegDecidesSNIThenAuthority(t *testing.T) {
 		{name: "authority under no rule", policy: httpsPolicy("api.example.com"), sni: "api.example.com", authority: "evil.example", want: envoy_type.StatusCode_Forbidden},
 		{name: "no sni", policy: httpsPolicy("*"), sni: "", authority: "api.example.com", want: envoy_type.StatusCode_Forbidden},
 		{name: "sni under an http rule only", policy: combined(httpPolicy("api.example.com"), httpsPolicy("cdn.example.com")), sni: "api.example.com", authority: "cdn.example.com", want: envoy_type.StatusCode_Forbidden},
-		{name: "passthrough rule does not decide", policy: passthroughPolicy([]string{"443"}, "*"), sni: "api.example.com", authority: "api.example.com", want: envoy_type.StatusCode_Forbidden},
+		{name: "passthrough rule does not decide", policy: passthroughPolicy(ports(443), "*"), sni: "api.example.com", authority: "api.example.com", want: envoy_type.StatusCode_Forbidden},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

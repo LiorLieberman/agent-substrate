@@ -36,9 +36,9 @@ func TestEgressPolicyFromManifest(t *testing.T) {
 	t.Parallel()
 
 	fullMetadata := &ateapipb.ResourceMetadata{Atespace: "team-a", Name: "default"}
-	httpRules := []*ateapipb.EgressRule{{Http: &ateapipb.HTTPRule{HostPatterns: []string{"api.example.com"}}}}
-	tlsRules := []*ateapipb.EgressRule{{TlsPassthrough: &ateapipb.TLSPassthroughRule{SniPatterns: []string{"*.example.com"}, Ports: []string{"443"}}}}
-	anyRules := []*ateapipb.EgressRule{{Http: &ateapipb.HTTPRule{HostPatterns: []string{"*"}}}}
+	httpRules := []*ateapipb.EgressRule{{Http: &ateapipb.HTTPRule{Hostnames: []string{"api.example.com"}}}}
+	tlsRules := []*ateapipb.EgressRule{{TlsPassthrough: &ateapipb.TLSPassthroughRule{Hostnames: []string{"*.example.com"}, Ports: &ateapipb.Ports{Numbers: []int32{443}}}}}
+	anyRules := []*ateapipb.EgressRule{{Http: &ateapipb.HTTPRule{Hostnames: []string{"*"}}}}
 
 	tests := []struct {
 		name     string
@@ -55,7 +55,7 @@ func TestEgressPolicyFromManifest(t *testing.T) {
   name: default
 rules:
 - http:
-    hostPatterns:
+    hostnames:
     - api.example.com
 `,
 			want: &ateapipb.EgressPolicy{Metadata: fullMetadata, Rules: httpRules},
@@ -64,7 +64,7 @@ rules:
 			name: "snake case tls_passthrough",
 			manifest: `metadata: {atespace: team-a, name: default}
 rules:
-- tls_passthrough: {sni_patterns: ["*.example.com"], ports: ["443"]}
+- tls_passthrough: {hostnames: ["*.example.com"], ports: {numbers: [443]}}
 `,
 			want: &ateapipb.EgressPolicy{Metadata: fullMetadata, Rules: tlsRules},
 		},
@@ -72,14 +72,14 @@ rules:
 			name: "star pattern",
 			manifest: `metadata: {atespace: team-a, name: default}
 rules:
-- http: {hostPatterns: ["*"]}
+- http: {hostnames: ["*"]}
 `,
 			want: &ateapipb.EgressPolicy{Metadata: fullMetadata, Rules: anyRules},
 		},
 		{
 			name: "metadata omitted is left nil",
 			manifest: `rules:
-- http: {hostPatterns: [api.example.com]}
+- http: {hostnames: [api.example.com]}
 `,
 			want: &ateapipb.EgressPolicy{Rules: httpRules},
 		},
@@ -92,7 +92,7 @@ rules:
   version: "2"
   createTime: "2026-01-01T11:55:00Z"
 rules:
-- http: {hostPatterns: [api.example.com]}
+- http: {hostnames: [api.example.com]}
 `,
 			want: &ateapipb.EgressPolicy{
 				Metadata: &ateapipb.ResourceMetadata{
@@ -107,7 +107,7 @@ rules:
 		},
 		{
 			name:     "json input",
-			manifest: `{"metadata": {"atespace": "team-a", "name": "default"}, "rules": [{"tls_passthrough": {"sni_patterns": ["*.example.com"], "ports": ["443"]}}]}`,
+			manifest: `{"metadata": {"atespace": "team-a", "name": "default"}, "rules": [{"tls_passthrough": {"hostnames": ["*.example.com"], "ports": {"numbers": [443]}}}]}`,
 			want:     &ateapipb.EgressPolicy{Metadata: fullMetadata, Rules: tlsRules},
 		},
 		{name: "empty", manifest: "", wantErr: true, wantErrContains: "manifest is empty"},
@@ -126,14 +126,14 @@ metadata: {name: default}
 			name: "leading document separator",
 			manifest: `---
 rules:
-- http: {hostPatterns: ["*"]}
+- http: {hostnames: ["*"]}
 `,
 			want: &ateapipb.EgressPolicy{Rules: anyRules},
 		},
 		{
 			name: "document end marker",
 			manifest: `rules:
-- http: {hostPatterns: ["*"]}
+- http: {hostnames: ["*"]}
 ...
 `,
 			want: &ateapipb.EgressPolicy{Rules: anyRules},
@@ -141,7 +141,7 @@ rules:
 		{
 			name: "trailing document separator",
 			manifest: `rules:
-- http: {hostPatterns: ["*"]}
+- http: {hostnames: ["*"]}
 ---
 `,
 			wantErr:         true,
@@ -150,7 +150,7 @@ rules:
 		{
 			name: "empty second document",
 			manifest: `rules:
-- http: {hostPatterns: ["*"]}
+- http: {hostnames: ["*"]}
 ---
 # nothing here
 `,
@@ -163,7 +163,7 @@ rules:
 # nothing
 ---
 rules:
-- http: {hostPatterns: ["*"]}
+- http: {hostnames: ["*"]}
 `,
 			wantErr:         true,
 			wantErrContains: "manifest holds more than one document",
@@ -173,7 +173,7 @@ rules:
 			manifest: `---
 ---
 rules:
-- http: {hostPatterns: ["*"]}
+- http: {hostnames: ["*"]}
 `,
 			wantErr:         true,
 			wantErrContains: "manifest holds more than one document",
@@ -181,7 +181,7 @@ rules:
 		{
 			name: "document end marker then separator",
 			manifest: `rules:
-- http: {hostPatterns: ["*"]}
+- http: {hostnames: ["*"]}
 ...
 ---
 `,
@@ -195,7 +195,7 @@ rules:
   name: default
 rules:
 - http:
-    hostPatterns:
+    hostnames:
     - api.example.com
 ---
 metadata:
@@ -203,10 +203,11 @@ metadata:
   name: default
 rules:
 - tls_passthrough:
-    sni_patterns:
+    hostnames:
     - "*.example.com"
     ports:
-    - "443"
+      numbers:
+      - 443
 `,
 			wantErr:         true,
 			wantErrContains: "manifest holds more than one document",
@@ -215,15 +216,15 @@ rules:
 			name: "three egress policies separated by ---",
 			manifest: `metadata: {atespace: team-a, name: default}
 rules:
-- http: {hostPatterns: [api.example.com]}
+- http: {hostnames: [api.example.com]}
 ---
 metadata: {atespace: team-b, name: default}
 rules:
-- tls_passthrough: {sni_patterns: ["*.example.com"], ports: ["443"]}
+- tls_passthrough: {hostnames: ["*.example.com"], ports: {numbers: [443]}}
 ---
 metadata: {atespace: team-c, name: default}
 rules:
-- http: {hostPatterns: ["*"]}
+- http: {hostnames: ["*"]}
 `,
 			wantErr:         true,
 			wantErrContains: "manifest holds more than one document",
@@ -232,22 +233,22 @@ rules:
 			name: "two policies with an empty document between",
 			manifest: `metadata: {atespace: team-a, name: default}
 rules:
-- http: {hostPatterns: [api.example.com]}
+- http: {hostnames: [api.example.com]}
 ---
 # just a comment
 ---
 metadata: {atespace: team-b, name: default}
 rules:
-- tls_passthrough: {sni_patterns: ["*.example.com"], ports: ["443"]}
+- tls_passthrough: {hostnames: ["*.example.com"], ports: {numbers: [443]}}
 `,
 			wantErr:         true,
 			wantErrContains: "manifest holds more than one document",
 		},
 		{
 			name: `two json documents separated by ---`,
-			manifest: `{"metadata": {"atespace": "team-a", "name": "default"}, "rules": [{"http": {"hostPatterns": ["*"]}}]}
+			manifest: `{"metadata": {"atespace": "team-a", "name": "default"}, "rules": [{"http": {"hostnames": ["*"]}}]}
 ---
-{"metadata": {"atespace": "team-b", "name": "default"}, "rules": [{"http": {"hostPatterns": ["*"]}}]}
+{"metadata": {"atespace": "team-b", "name": "default"}, "rules": [{"http": {"hostnames": ["*"]}}]}
 `,
 			wantErr:         true,
 			wantErrContains: "manifest holds more than one document",
@@ -279,7 +280,7 @@ rules:
 func TestOverrideEgressPolicyMetadata(t *testing.T) {
 	t.Parallel()
 
-	rules := []*ateapipb.EgressRule{{Http: &ateapipb.HTTPRule{HostPatterns: []string{"*"}}}}
+	rules := []*ateapipb.EgressRule{{Http: &ateapipb.HTTPRule{Hostnames: []string{"*"}}}}
 	filled := &ateapipb.EgressPolicy{Metadata: &ateapipb.ResourceMetadata{Atespace: "team-a", Name: "default"}, Rules: rules}
 	pinned := &ateapipb.ResourceMetadata{Atespace: "team-a", Name: "default", Uid: "3f2b1c0e-8d5a-4b6e-9c1d-2a7e4f6b8c0d", Version: 2}
 
@@ -361,11 +362,11 @@ func TestEgressPolicyManifest_RoundTrip(t *testing.T) {
 			UpdateTime: timestamppb.New(time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)),
 		},
 		Rules: []*ateapipb.EgressRule{
-			{Http: &ateapipb.HTTPRule{HostPatterns: []string{"*.example.com"}, Ports: []string{"80", "8080"}}},
-			{Https: &ateapipb.HTTPSRule{HostPatterns: []string{"api.example.com"}, Effects: &ateapipb.HttpRuleEffects{
-				ReplaceHeaders: []*ateapipb.CredentialHeaderInjection{{Header: "authorization", Prefix: "Bearer ", CredentialUri: "ate-secret://k8s/default/token"}},
+			{Http: &ateapipb.HTTPRule{Hostnames: []string{"*.example.com"}, Ports: &ateapipb.Ports{Numbers: []int32{80, 8080}}}},
+			{Https: &ateapipb.HTTPSRule{Hostnames: []string{"api.example.com"}, Effects: &ateapipb.HttpRuleEffects{
+				ReplaceHeaders: []*ateapipb.CredentialHeader{{Header: "authorization", Prefix: "Bearer ", CredentialUri: "ate-secret://k8s/default/token"}},
 			}}},
-			{TlsPassthrough: &ateapipb.TLSPassthroughRule{SniPatterns: []string{"*"}, Ports: []string{"*"}}},
+			{TlsPassthrough: &ateapipb.TLSPassthroughRule{Hostnames: []string{"*"}, Ports: &ateapipb.Ports{All: &ateapipb.AllPorts{}}}},
 		},
 	}
 
@@ -441,7 +442,7 @@ func TestGetEgressPolicyRunner_Run(t *testing.T) {
 			Version:    1,
 			CreateTime: timestamppb.New(now.Add(-5 * time.Minute)), // table row prints AGE 5m
 		},
-		Rules: []*ateapipb.EgressRule{{Http: &ateapipb.HTTPRule{HostPatterns: []string{"api.example.com"}}}},
+		Rules: []*ateapipb.EgressRule{{Http: &ateapipb.HTTPRule{Hostnames: []string{"api.example.com"}}}},
 	}
 
 	tests := []struct {
@@ -476,7 +477,7 @@ team-a     c1      1       1         5m
   version: "1"
 rules:
 - http:
-    hostPatterns:
+    hostnames:
     - api.example.com
 `,
 		},
@@ -568,7 +569,7 @@ func TestCreateEgressPolicyRunner_Run(t *testing.T) {
 	pinTime(t, now)
 
 	actor := &ateapipb.ObjectRef{Atespace: "team-a", Name: "c1"}
-	rules := []*ateapipb.EgressRule{{Http: &ateapipb.HTTPRule{HostPatterns: []string{"api.example.com"}}}}
+	rules := []*ateapipb.EgressRule{{Http: &ateapipb.HTTPRule{Hostnames: []string{"api.example.com"}}}}
 	// A manifest cloned from another actor still carries that actor's
 	// server-managed fields; the CLI sends them as is and the server scrubs them.
 	manifest := &ateapipb.EgressPolicy{
@@ -614,7 +615,7 @@ team-a     c1      1       1         0s
   version: "1"
 rules:
 - http:
-    hostPatterns:
+    hostnames:
     - api.example.com
 `,
 		},
@@ -694,8 +695,8 @@ func TestUpdateEgressPolicyRunner_Run(t *testing.T) {
 	actor := &ateapipb.ObjectRef{Atespace: "team-a", Name: "c1"}
 	const uid = "3f2b1c0e-8d5a-4b6e-9c1d-2a7e4f6b8c0d"
 	rules := []*ateapipb.EgressRule{
-		{Http: &ateapipb.HTTPRule{HostPatterns: []string{"api.example.com"}}},
-		{Https: &ateapipb.HTTPSRule{HostPatterns: []string{"www.example.com"}}},
+		{Http: &ateapipb.HTTPRule{Hostnames: []string{"api.example.com"}}},
+		{Https: &ateapipb.HTTPSRule{Hostnames: []string{"www.example.com"}}},
 	}
 	// The manifest is what `get -o yaml` printed, edited: it still carries the
 	// uid, version, and timestamps of the policy being replaced.
@@ -751,10 +752,10 @@ team-a     c1      2       2         60s
   version: "2"
 rules:
 - http:
-    hostPatterns:
+    hostnames:
     - api.example.com
 - https:
-    hostPatterns:
+    hostnames:
     - www.example.com
 `,
 		},

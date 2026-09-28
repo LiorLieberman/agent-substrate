@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/agent-substrate/substrate/cmd/ateapi/internal/defaults"
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/store"
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/store/storetest"
 	"github.com/agent-substrate/substrate/internal/resources"
@@ -34,9 +35,9 @@ func validEgressPolicy() *ateapipb.EgressPolicy {
 		Metadata: &ateapipb.ResourceMetadata{Atespace: testAtespace, Name: "default"},
 		Rules: []*ateapipb.EgressRule{{
 			Http: &ateapipb.HTTPRule{
-				HostPatterns: []string{"api.example.com"},
+				Hostnames: []string{"api.example.com"},
 				Effects: &ateapipb.HttpRuleEffects{
-					ReplaceHeaders: []*ateapipb.CredentialHeaderInjection{{
+					ReplaceHeaders: []*ateapipb.CredentialHeader{{
 						Header:        "Authorization",
 						Prefix:        "Bearer ",
 						CredentialUri: "ate-secret://kubernetes.io/provider/ns/name",
@@ -296,11 +297,11 @@ func TestValidateUpdateActorEgressPolicyRequest(t *testing.T) {
 		name: "invalid rule",
 		req: func() *ateapipb.UpdateActorEgressPolicyRequest {
 			r := validReq()
-			r.EgressPolicy.Rules[0].Http.HostPatterns = nil
+			r.EgressPolicy.Rules[0].Http.Hostnames = nil
 			return r
 		}(),
 		want: field.ErrorList{
-			field.Required(field.NewPath("egress_policy", "rules").Index(0).Child("http", "host_patterns"), ""),
+			field.Required(field.NewPath("egress_policy", "rules").Index(0).Child("http", "hostnames"), ""),
 		},
 	}}
 	for _, tc := range tests {
@@ -382,11 +383,10 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	rules := root.Child("rules")
 	rule := rules.Index(0)
 	httpRule := rule.Child("http")
-	pattern := httpRule.Child("host_patterns").Index(0)
+	pattern := httpRule.Child("hostnames").Index(0)
 	ports := httpRule.Child("ports")
 	staticHeader := httpRule.Child("effects", "replace_headers").Index(0)
 	const badPattern = `must be a DNS hostname, optionally with a complete leftmost-label wildcard, or "*"`
-	const badPort = `must be a port number from 1 to 65535, or "*"`
 	validReq := func() *ateapipb.CreateActorEgressPolicyRequest {
 		return &ateapipb.CreateActorEgressPolicyRequest{
 			Actor:        &ateapipb.ObjectRef{Atespace: testAtespace, Name: "actor"},
@@ -395,14 +395,16 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}
 	withoutEffects := func(p *ateapipb.EgressPolicy) { p.Rules[0].Http.Effects = nil }
 	trivialHTTPRule := func(hostname string) *ateapipb.EgressRule {
-		return &ateapipb.EgressRule{Http: &ateapipb.HTTPRule{HostPatterns: []string{hostname}}}
+		return &ateapipb.EgressRule{Http: &ateapipb.HTTPRule{Hostnames: []string{hostname}}}
 	}
-	httpsRule := func(ports []string, patterns ...string) *ateapipb.EgressRule {
-		return &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{HostPatterns: patterns, Ports: ports}}
+	httpsRule := func(ports *ateapipb.Ports, patterns ...string) *ateapipb.EgressRule {
+		return &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{Hostnames: patterns, Ports: ports}}
 	}
-	passthroughRule := func(ports []string, patterns ...string) *ateapipb.EgressRule {
-		return &ateapipb.EgressRule{TlsPassthrough: &ateapipb.TLSPassthroughRule{SniPatterns: patterns, Ports: ports}}
+	passthroughRule := func(ports *ateapipb.Ports, patterns ...string) *ateapipb.EgressRule {
+		return &ateapipb.EgressRule{TlsPassthrough: &ateapipb.TLSPassthroughRule{Hostnames: patterns, Ports: ports}}
 	}
+	portNumbers := func(numbers ...int32) *ateapipb.Ports { return &ateapipb.Ports{Numbers: numbers} }
+	allPorts := func() *ateapipb.Ports { return &ateapipb.Ports{All: &ateapipb.AllPorts{}} }
 
 	tests := []struct {
 		name   string
@@ -453,7 +455,7 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}, {
 		name: "two protocols",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Https = &ateapipb.HTTPSRule{HostPatterns: []string{"api.example.com"}}
+			p.Rules[0].Https = &ateapipb.HTTPSRule{Hostnames: []string{"api.example.com"}}
 		},
 		want: field.ErrorList{
 			field.Invalid(rule, nil, "one of").WithOrigin("union"),
@@ -461,12 +463,12 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}, {
 		name: "https rule",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0] = httpsRule([]string{"443", "8443"}, "api.example.com", "*.example.org")
+			p.Rules[0] = httpsRule(portNumbers(443, 8443), "api.example.com", "*.example.org")
 		},
 	}, {
 		name: "tls passthrough rule",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0] = passthroughRule([]string{"443"}, "api.example.com", "*")
+			p.Rules[0] = passthroughRule(portNumbers(443), "api.example.com", "*")
 		},
 	}, {
 		name: "tls passthrough rule without ports",
@@ -479,11 +481,11 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}, {
 		name: "empty pattern list",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.HostPatterns = nil
+			p.Rules[0].Http.Hostnames = nil
 			withoutEffects(p)
 		},
 		want: field.ErrorList{
-			field.Required(httpRule.Child("host_patterns"), ""),
+			field.Required(httpRule.Child("hostnames"), ""),
 		},
 	}, {
 		name: "long pattern list",
@@ -492,7 +494,7 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 			for i := range 256 {
 				pats = append(pats, fmt.Sprintf("api%d.example.com", i))
 			}
-			p.Rules[0].Http.HostPatterns = pats
+			p.Rules[0].Http.Hostnames = pats
 			withoutEffects(p)
 		},
 	}, {
@@ -502,16 +504,16 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 			for i := range 257 {
 				pats = append(pats, fmt.Sprintf("api%d.example.com", i))
 			}
-			p.Rules[0].Http.HostPatterns = pats
+			p.Rules[0].Http.Hostnames = pats
 			withoutEffects(p)
 		},
 		want: field.ErrorList{
-			field.TooMany(httpRule.Child("host_patterns"), 257, 256).WithOrigin("maxItems"),
+			field.TooMany(httpRule.Child("hostnames"), 257, 256).WithOrigin("maxItems"),
 		},
 	}, {
 		name: "missing pattern",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.HostPatterns[0] = ""
+			p.Rules[0].Http.Hostnames[0] = ""
 			withoutEffects(p)
 		},
 		want: field.ErrorList{
@@ -520,15 +522,15 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}, {
 		name: "duplicate pattern",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.HostPatterns = append(p.Rules[0].Http.HostPatterns, "api.example.com")
+			p.Rules[0].Http.Hostnames = append(p.Rules[0].Http.Hostnames, "api.example.com")
 		},
 		want: field.ErrorList{
-			field.Duplicate(httpRule.Child("host_patterns").Index(1), "api.example.com"),
+			field.Duplicate(httpRule.Child("hostnames").Index(1), "api.example.com"),
 		},
 	}, {
 		name: "invalid pattern",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.HostPatterns[0] = "https://example.com"
+			p.Rules[0].Http.Hostnames[0] = "https://example.com"
 		},
 		want: field.ErrorList{
 			field.Invalid(pattern, "https://example.com", badPattern),
@@ -536,7 +538,7 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}, {
 		name: "uppercase pattern",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.HostPatterns[0] = "API.EXAMPLE.COM"
+			p.Rules[0].Http.Hostnames[0] = "API.EXAMPLE.COM"
 		},
 		want: field.ErrorList{
 			field.Invalid(pattern, "API.EXAMPLE.COM", badPattern),
@@ -544,7 +546,7 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}, {
 		name: "pattern with trailing dot",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.HostPatterns[0] = "api.example.com."
+			p.Rules[0].Http.Hostnames[0] = "api.example.com."
 		},
 		want: field.ErrorList{
 			field.Invalid(pattern, "api.example.com.", badPattern),
@@ -552,7 +554,7 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}, {
 		name: "IP literal pattern",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.HostPatterns[0] = "192.0.2.1"
+			p.Rules[0].Http.Hostnames[0] = "192.0.2.1"
 		},
 		want: field.ErrorList{
 			field.Invalid(pattern, "192.0.2.1", badPattern),
@@ -560,7 +562,7 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}, {
 		name: "pattern with port",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.HostPatterns[0] = "example.com:443"
+			p.Rules[0].Http.Hostnames[0] = "example.com:443"
 		},
 		want: field.ErrorList{
 			field.Invalid(pattern, "example.com:443", badPattern),
@@ -568,23 +570,23 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}, {
 		name: "wildcard without effects",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.HostPatterns[0] = "*.example.com"
+			p.Rules[0].Http.Hostnames[0] = "*.example.com"
 			withoutEffects(p)
 		},
 	}, {
 		name: "wildcard with effects",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.HostPatterns[0] = "*.example.com"
+			p.Rules[0].Http.Hostnames[0] = "*.example.com"
 		},
 	}, {
 		name: "star pattern",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.HostPatterns[0] = "*"
+			p.Rules[0].Http.Hostnames[0] = "*"
 		},
 	}, {
 		name: "invalid wildcard",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.HostPatterns[0] = "api.*.example.com"
+			p.Rules[0].Http.Hostnames[0] = "api.*.example.com"
 		},
 		want: field.ErrorList{
 			field.Invalid(pattern, "api.*.example.com", badPattern),
@@ -592,101 +594,101 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}, {
 		name: "invalid sni pattern",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0] = passthroughRule([]string{"443"}, "*example.com")
+			p.Rules[0] = passthroughRule(portNumbers(443), "*example.com")
 		},
 		want: field.ErrorList{
-			field.Invalid(rule.Child("tls_passthrough", "sni_patterns").Index(0), "*example.com", badPattern),
+			field.Invalid(rule.Child("tls_passthrough", "hostnames").Index(0), "*example.com", badPattern),
 		},
 	}, {
 		name: "ports",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.Ports = []string{"80", "8080"}
+			p.Rules[0].Http.Ports = portNumbers(80, 8080)
 		},
 	}, {
 		name: "any port",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.Ports = []string{"*"}
+			p.Rules[0].Http.Ports = allPorts()
 		},
 	}, {
-		name: "any port among others",
+		name: "all and numbers together",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.Ports = []string{"80", "*"}
+			p.Rules[0].Http.Ports = &ateapipb.Ports{All: &ateapipb.AllPorts{}, Numbers: []int32{80}}
 		},
 		want: field.ErrorList{
-			field.Invalid(ports.Index(1), "*", `"*" must be the only entry`),
+			field.Invalid(ports, nil, "one of").WithOrigin("union"),
+		},
+	}, {
+		name: "empty ports",
+		mutate: func(p *ateapipb.EgressPolicy) {
+			p.Rules[0].Http.Ports = &ateapipb.Ports{}
+		},
+		want: field.ErrorList{
+			field.Invalid(ports, nil, "one of").WithOrigin("union"),
+		},
+	}, {
+		name: "empty numbers",
+		mutate: func(p *ateapipb.EgressPolicy) {
+			p.Rules[0].Http.Ports = &ateapipb.Ports{Numbers: []int32{}}
+		},
+		want: field.ErrorList{
+			field.Invalid(ports, nil, "one of").WithOrigin("union"),
 		},
 	}, {
 		name: "port zero",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.Ports = []string{"0"}
+			p.Rules[0].Http.Ports = portNumbers(0)
 		},
 		want: field.ErrorList{
-			field.Invalid(ports.Index(0), "0", badPort),
+			field.Invalid(ports.Child("numbers").Index(0), int32(0), "").WithOrigin("minimum"),
 		},
 	}, {
 		name: "port out of range",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.Ports = []string{"65536"}
+			p.Rules[0].Http.Ports = portNumbers(65536)
 		},
 		want: field.ErrorList{
-			field.Invalid(ports.Index(0), "65536", badPort),
-		},
-	}, {
-		name: "port with leading zero",
-		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.Ports = []string{"080"}
-		},
-		want: field.ErrorList{
-			field.Invalid(ports.Index(0), "080", badPort),
-		},
-	}, {
-		name: "port by name",
-		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.Ports = []string{"http"}
-		},
-		want: field.ErrorList{
-			field.Invalid(ports.Index(0), "http", badPort),
+			field.Invalid(ports.Child("numbers").Index(0), int32(65536), "").WithOrigin("maximum"),
 		},
 	}, {
 		name: "duplicate port",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.Ports = []string{"80", "80"}
+			p.Rules[0].Http.Ports = portNumbers(80, 80)
 		},
 		want: field.ErrorList{
-			field.Duplicate(ports.Index(1), "80"),
+			field.Duplicate(ports.Child("numbers").Index(1), int32(80)),
 		},
 	}, {
 		name: "too many ports",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			var many []string
+			var many []int32
 			for i := range 17 {
-				many = append(many, fmt.Sprintf("%d", 8000+i))
+				many = append(many, int32(8000+i))
 			}
-			p.Rules[0].Http.Ports = many
+			p.Rules[0].Http.Ports = portNumbers(many...)
 		},
 		want: field.ErrorList{
-			field.TooMany(ports, 17, 16).WithOrigin("maxItems"),
+			field.TooMany(ports.Child("numbers"), 17, 16).WithOrigin("maxItems"),
 		},
 	}, {
-		name: "invalid https port",
+		name: "negative https port",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0] = httpsRule([]string{"-1"}, "api.example.com")
+			p.Rules[0] = httpsRule(portNumbers(-1), "api.example.com")
 		},
 		want: field.ErrorList{
-			field.Invalid(rule.Child("https", "ports").Index(0), "-1", badPort),
+			field.Invalid(rule.Child("https", "ports", "numbers").Index(0), int32(-1), "").WithOrigin("minimum"),
 		},
 	}, {
-		name: "invalid tls passthrough port",
+		name: "tls passthrough with empty ports",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0] = passthroughRule([]string{"443 "}, "*")
+			p.Rules[0] = passthroughRule(&ateapipb.Ports{}, "*")
 		},
 		want: field.ErrorList{
-			field.Invalid(rule.Child("tls_passthrough", "ports").Index(0), "443 ", badPort),
+			field.Invalid(rule.Child("tls_passthrough", "ports"), nil, "one of").WithOrigin("union"),
 		},
 	}, {
 		name: "same pattern on different ports",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules = append(p.Rules, &ateapipb.EgressRule{Http: &ateapipb.HTTPRule{HostPatterns: []string{"api.example.com"}, Ports: []string{"8080"}}})
+			p.Rules = append(p.Rules, &ateapipb.EgressRule{Http: &ateapipb.HTTPRule{Hostnames: []string{"api.example.com"}, Ports: portNumbers(8080)}})
 		},
 	}, {
 		name: "same pattern on the default port ties",
@@ -694,7 +696,7 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 			p.Rules = append(p.Rules, trivialHTTPRule("api.example.com"))
 		},
 		want: field.ErrorList{
-			field.Invalid(rules.Index(1).Child("http", "host_patterns").Index(0), "api.example.com", `ties with egress_policy.rules[0].http.host_patterns[0] on port "80"`),
+			field.Invalid(rules.Index(1).Child("http", "hostnames").Index(0), "api.example.com", `ties with egress_policy.rules[0].http.hostnames[0] on port 80`),
 		},
 	}, {
 		name: "http and https on their default ports do not tie",
@@ -704,35 +706,35 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}, {
 		name: "http and https on any port tie",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0].Http.Ports = []string{"*"}
-			p.Rules = append(p.Rules, httpsRule([]string{"*"}, "api.example.com"))
+			p.Rules[0].Http.Ports = allPorts()
+			p.Rules = append(p.Rules, httpsRule(allPorts(), "api.example.com"))
 		},
 		want: field.ErrorList{
-			field.Invalid(rules.Index(1).Child("https", "host_patterns").Index(0), "api.example.com", `ties with egress_policy.rules[0].http.host_patterns[0] on port "*"`),
+			field.Invalid(rules.Index(1).Child("https", "hostnames").Index(0), "api.example.com", `ties with egress_policy.rules[0].http.hostnames[0] on every port`),
 		},
 	}, {
 		name: "http and tls passthrough on every port tie",
 		mutate: func(p *ateapipb.EgressPolicy) {
 			p.Rules = []*ateapipb.EgressRule{
-				{Http: &ateapipb.HTTPRule{HostPatterns: []string{"*"}, Ports: []string{"*"}}},
-				passthroughRule([]string{"*"}, "*"),
+				{Http: &ateapipb.HTTPRule{Hostnames: []string{"*"}, Ports: allPorts()}},
+				passthroughRule(allPorts(), "*"),
 			}
 		},
 		want: field.ErrorList{
-			field.Invalid(rules.Index(1).Child("tls_passthrough", "sni_patterns").Index(0), "*", `ties with egress_policy.rules[0].http.host_patterns[0] on port "*"`),
+			field.Invalid(rules.Index(1).Child("tls_passthrough", "hostnames").Index(0), "*", `ties with egress_policy.rules[0].http.hostnames[0] on every port`),
 		},
 	}, {
 		name: "http on its default port and tls passthrough on every port",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules = []*ateapipb.EgressRule{trivialHTTPRule("*"), passthroughRule([]string{"*"}, "*")}
+			p.Rules = []*ateapipb.EgressRule{trivialHTTPRule("*"), passthroughRule(allPorts(), "*")}
 		},
 	}, {
 		name: "https and tls passthrough on the same port tie",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules = append(p.Rules, httpsRule(nil, "*.example.com"), passthroughRule([]string{"443"}, "*.example.com"))
+			p.Rules = append(p.Rules, httpsRule(nil, "*.example.com"), passthroughRule(portNumbers(443), "*.example.com"))
 		},
 		want: field.ErrorList{
-			field.Invalid(rules.Index(2).Child("tls_passthrough", "sni_patterns").Index(0), "*.example.com", `ties with egress_policy.rules[1].https.host_patterns[0] on port "443"`),
+			field.Invalid(rules.Index(2).Child("tls_passthrough", "hostnames").Index(0), "*.example.com", `ties with egress_policy.rules[1].https.hostnames[0] on port 443`),
 		},
 	}, {
 		name: "missing static header",
@@ -755,7 +757,7 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 		mutate: func(p *ateapipb.EgressPolicy) {
 			p.Rules[0].Http.Effects.ReplaceHeaders = append(
 				p.Rules[0].Http.Effects.ReplaceHeaders,
-				&ateapipb.CredentialHeaderInjection{Header: "authorization", CredentialUri: "ate-secret://example.com/provider/secret"},
+				&ateapipb.CredentialHeader{Header: "authorization", CredentialUri: "ate-secret://example.com/provider/secret"},
 			)
 		},
 		want: field.ErrorList{
@@ -765,15 +767,15 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 		name: "same header in later rule",
 		mutate: func(p *ateapipb.EgressPolicy) {
 			later := proto.Clone(p.Rules[0]).(*ateapipb.EgressRule)
-			later.Http.HostPatterns = []string{"other.example.com"}
+			later.Http.Hostnames = []string{"other.example.com"}
 			p.Rules = append(p.Rules, later)
 		},
 	}, {
 		name: "many headers",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			var injections []*ateapipb.CredentialHeaderInjection
+			var injections []*ateapipb.CredentialHeader
 			for i := range 16 {
-				injections = append(injections, &ateapipb.CredentialHeaderInjection{
+				injections = append(injections, &ateapipb.CredentialHeader{
 					Header:        fmt.Sprintf("X-Header-%d", i),
 					CredentialUri: "ate-secret://example.com/provider/secret",
 				})
@@ -783,9 +785,9 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}, {
 		name: "too many headers",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			var injections []*ateapipb.CredentialHeaderInjection
+			var injections []*ateapipb.CredentialHeader
 			for i := range 17 {
-				injections = append(injections, &ateapipb.CredentialHeaderInjection{
+				injections = append(injections, &ateapipb.CredentialHeader{
 					Header:        fmt.Sprintf("X-Header-%d", i),
 					CredentialUri: "ate-secret://example.com/provider/secret",
 				})
@@ -830,7 +832,7 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 	}, {
 		name: "effects on an https rule",
 		mutate: func(p *ateapipb.EgressPolicy) {
-			p.Rules[0] = &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{HostPatterns: []string{"api.example.com"}, Effects: &ateapipb.HttpRuleEffects{}}}
+			p.Rules[0] = &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{Hostnames: []string{"api.example.com"}, Effects: &ateapipb.HttpRuleEffects{}}}
 		},
 		want: field.ErrorList{
 			field.Required(rule.Child("https", "effects"), "at least one effect must be specified"),
@@ -842,6 +844,7 @@ func TestValidateEgressPolicyRules(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(req.EgressPolicy)
 			}
+			defaults.Apply(req.EgressPolicy)
 			assertValidateErr(t, validateCreateActorEgressPolicyRequest(context.Background(), req), tc.want)
 		})
 	}
@@ -885,9 +888,9 @@ func TestActorEgressPolicy(t *testing.T) {
 				Version:  99,
 			}, Rules: []*ateapipb.EgressRule{{
 				Http: &ateapipb.HTTPRule{
-					HostPatterns: []string{"api.example.com"},
+					Hostnames: []string{"api.example.com"},
 					Effects: &ateapipb.HttpRuleEffects{
-						ReplaceHeaders: []*ateapipb.CredentialHeaderInjection{{
+						ReplaceHeaders: []*ateapipb.CredentialHeader{{
 							Header:        "Authorization",
 							Prefix:        "Bearer ",
 							CredentialUri: "ate-secret://kubernetes.io/provider/ns/name",
@@ -919,7 +922,7 @@ func TestActorEgressPolicy(t *testing.T) {
 		t.Fatalf("policy after create = %v, %v; want %v", got, err, created)
 	}
 	if _, err := service.impl.UpdateEgressPolicy(t.Context(), resources.ActorRefFromObjectRef(actorRef), store.PreconditionFrom(created), func(policy *ateapipb.EgressPolicy) error {
-		policy.Rules[0].Http.HostPatterns = nil
+		policy.Rules[0].Http.Hostnames = nil
 		return nil
 	}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("invalid internal update status = %v, want InvalidArgument", status.Code(err))

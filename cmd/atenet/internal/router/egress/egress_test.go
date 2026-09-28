@@ -209,32 +209,36 @@ func (m *egressMockClient) GetActorEgressPolicy(ctx context.Context, _ *ateapipb
 // allowAllPolicy allows every name and address: cleartext HTTP on any port
 // and HTTPS on 443.
 func allowAllPolicy() *ateapipb.EgressPolicy {
-	return combined(httpPolicyOnPorts([]string{"*"}, "*"), httpsPolicy("*"))
+	return combined(httpPolicyOnPorts(allPorts(), "*"), httpsPolicy("*"))
 }
 
 func httpPolicy(patterns ...string) *ateapipb.EgressPolicy {
 	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{
-		Http: &ateapipb.HTTPRule{HostPatterns: patterns},
+		Http: &ateapipb.HTTPRule{Hostnames: patterns},
 	}}}
 }
 
-func httpPolicyOnPorts(ports []string, patterns ...string) *ateapipb.EgressPolicy {
+func httpPolicyOnPorts(ports *ateapipb.Ports, patterns ...string) *ateapipb.EgressPolicy {
 	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{
-		Http: &ateapipb.HTTPRule{HostPatterns: patterns, Ports: ports},
+		Http: &ateapipb.HTTPRule{Hostnames: patterns, Ports: ports},
 	}}}
 }
 
 func httpsPolicy(patterns ...string) *ateapipb.EgressPolicy {
 	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{
-		Https: &ateapipb.HTTPSRule{HostPatterns: patterns},
+		Https: &ateapipb.HTTPSRule{Hostnames: patterns},
 	}}}
 }
 
-func passthroughPolicy(ports []string, patterns ...string) *ateapipb.EgressPolicy {
+func passthroughPolicy(ports *ateapipb.Ports, patterns ...string) *ateapipb.EgressPolicy {
 	return &ateapipb.EgressPolicy{Rules: []*ateapipb.EgressRule{{
-		TlsPassthrough: &ateapipb.TLSPassthroughRule{SniPatterns: patterns, Ports: ports},
+		TlsPassthrough: &ateapipb.TLSPassthroughRule{Hostnames: patterns, Ports: ports},
 	}}}
 }
+
+func ports(numbers ...int32) *ateapipb.Ports { return &ateapipb.Ports{Numbers: numbers} }
+
+func allPorts() *ateapipb.Ports { return &ateapipb.Ports{All: &ateapipb.AllPorts{}} }
 
 func runningActor() *ateapipb.Actor {
 	return &ateapipb.Actor{
@@ -335,7 +339,7 @@ func TestConnectLegOpensForAnyRules(t *testing.T) {
 	for name, policy := range map[string]*ateapipb.EgressPolicy{
 		"http":            httpPolicy("api.example.com"),
 		"https":           httpsPolicy("api.example.com"),
-		"tls passthrough": passthroughPolicy([]string{"443"}, "*"),
+		"tls passthrough": passthroughPolicy(ports(443), "*"),
 		"allow all":       allowAllPolicy(),
 	} {
 		t.Run(name, func(t *testing.T) {

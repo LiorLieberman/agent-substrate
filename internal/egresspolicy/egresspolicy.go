@@ -13,8 +13,8 @@
 // limitations under the License.
 
 // Package egresspolicy evaluates an Actor's EgressPolicy against a
-// destination. ateapi validates patterns and ports with the same parsers the
-// gateway matches with, so the two cannot drift.
+// destination. ateapi validates patterns with the same parser the gateway
+// matches with, so the two cannot drift.
 //
 // The gateway does not decide at the ClientHello yet: every TLS connection is
 // intercepted, and a tls_passthrough rule matches nothing until it does. The
@@ -83,21 +83,22 @@ const (
 type compiledRule struct {
 	protocol protocol
 	patterns []HostnamePattern
-	// ports the rule names; anyPort when it names "*".
+	// ports the rule names; anyPort when it names all of them.
 	ports   []uint16
 	anyPort bool
 	effects *ateapipb.HttpRuleEffects
 }
 
-// Default ports of the rules that have one. A tls_passthrough rule must name
-// its ports.
+// Ports read for an http or https rule that names none. ateapi fills these
+// in before storing a policy; the gateway repeats them so an unset field
+// can only ever narrow a rule, never widen it.
 const (
 	defaultHTTPPort  uint16 = 80
 	defaultHTTPSPort uint16 = 443
 )
 
-// Compile parses every pattern and port in policy. ateapi validates with the
-// same parsers, so nothing should fail here; an entry that does (an older
+// Compile parses every pattern and port in policy. ateapi validates the
+// same way, so nothing should fail here; an entry that does (an older
 // ateapi accepted it) is dropped and reported, which fails closed because it
 // only narrows an allow rule. The Policy is always usable.
 func Compile(policy *ateapipb.EgressPolicy) (*Policy, []error) {
@@ -107,23 +108,23 @@ func Compile(policy *ateapipb.EgressPolicy) (*Policy, []error) {
 		var (
 			cr          compiledRule
 			member      string
-			patterns    string
-			raw, ports  []string
+			raw         []string
+			ports       *ateapipb.Ports
 			defaultPort uint16
 		)
 		switch {
 		case rule.GetHttp() != nil:
 			cr.protocol, cr.effects = protocolHTTP, rule.GetHttp().GetEffects()
-			member, patterns = "http", "host_patterns"
-			raw, ports, defaultPort = rule.GetHttp().GetHostPatterns(), rule.GetHttp().GetPorts(), defaultHTTPPort
+			member = "http"
+			raw, ports, defaultPort = rule.GetHttp().GetHostnames(), rule.GetHttp().GetPorts(), defaultHTTPPort
 		case rule.GetHttps() != nil:
 			cr.protocol, cr.effects = protocolHTTPS, rule.GetHttps().GetEffects()
-			member, patterns = "https", "host_patterns"
-			raw, ports, defaultPort = rule.GetHttps().GetHostPatterns(), rule.GetHttps().GetPorts(), defaultHTTPSPort
+			member = "https"
+			raw, ports, defaultPort = rule.GetHttps().GetHostnames(), rule.GetHttps().GetPorts(), defaultHTTPSPort
 		case rule.GetTlsPassthrough() != nil:
 			cr.protocol = protocolTLSPassthrough
-			member, patterns = "tls_passthrough", "sni_patterns"
-			raw, ports = rule.GetTlsPassthrough().GetSniPatterns(), rule.GetTlsPassthrough().GetPorts()
+			member = "tls_passthrough"
+			raw, ports = rule.GetTlsPassthrough().GetHostnames(), rule.GetTlsPassthrough().GetPorts()
 		default:
 			compiled.rules = append(compiled.rules, cr)
 			continue
@@ -131,29 +132,25 @@ func Compile(policy *ateapipb.EgressPolicy) (*Policy, []error) {
 		for _, entry := range raw {
 			pattern, err := ParseHostnamePattern(entry)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("rules[%d].%s.%s: %w", i, member, patterns, err))
+				errs = append(errs, fmt.Errorf("rules[%d].%s.hostnames: %w", i, member, err))
 				continue
 			}
 			cr.patterns = append(cr.patterns, pattern)
 		}
-		if len(ports) == 0 {
-			if defaultPort == 0 {
-				errs = append(errs, fmt.Errorf("rules[%d].%s.ports: required", i, member))
-			} else {
-				cr.ports = []uint16{defaultPort}
-			}
+		switch {
+		case ports == nil && defaultPort == 0:
+			errs = append(errs, fmt.Errorf("rules[%d].%s.ports: required", i, member))
+		case ports == nil:
+			cr.ports = []uint16{defaultPort}
+		case ports.GetAll() != nil:
+			cr.anyPort = true
 		}
-		for _, entry := range ports {
-			if entry == "*" {
-				cr.anyPort = true
+		for _, n := range ports.GetNumbers() {
+			if n < 1 || n > 65535 {
+				errs = append(errs, fmt.Errorf("rules[%d].%s.ports.numbers: %d is not a port number", i, member, n))
 				continue
 			}
-			port, err := ParsePort(entry)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("rules[%d].%s.ports: %w", i, member, err))
-				continue
-			}
-			cr.ports = append(cr.ports, port)
+			cr.ports = append(cr.ports, uint16(n))
 		}
 		compiled.rules = append(compiled.rules, cr)
 	}
@@ -218,7 +215,7 @@ const (
 	rankAny
 )
 
-// portRank is 0 for a rule that names its ports and 1 for "*".
+// portRank is 0 for a rule that names its ports and 1 for all of them.
 func (r compiledRule) portRank() int {
 	if r.anyPort {
 		return 1
@@ -304,16 +301,6 @@ func (p HostnamePattern) rank() int {
 		return rankWildcard
 	}
 	return rankExact
-}
-
-// ParsePort parses one ports entry other than "*": a decimal port number from
-// 1 to 65535, with no sign, leading zeros, or surrounding space.
-func ParsePort(raw string) (uint16, error) {
-	n, err := strconv.ParseUint(raw, 10, 16)
-	if err != nil || n == 0 || strconv.FormatUint(n, 10) != raw {
-		return 0, fmt.Errorf("%q is not a port number", raw)
-	}
-	return uint16(n), nil
 }
 
 // NormalizeAuthority turns an :authority or Host value into a Destination:
