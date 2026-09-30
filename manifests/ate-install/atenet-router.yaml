@@ -150,7 +150,7 @@ spec:
         # Envoy (the agentgateway overlay is statically configured and does
         # not start it).
         # Egress runs the same binary with --mode=egress in its own
-        # Deployment (manifests/ate-install/atenet-egress-with-sdsmint.yaml), because the two
+        # Deployment (manifests/ate-install/atenet-egress.yaml), because the two
         # directions scale independently.
         - "--mode=ingress"
         - "--namespace=ate-system"

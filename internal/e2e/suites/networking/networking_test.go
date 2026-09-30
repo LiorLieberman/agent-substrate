@@ -114,7 +114,7 @@ func TestActorEgress(t *testing.T) {
 }
 
 // TestActorEgressHTTPS covers the same path as TestActorEgress with a TLS
-// origin, through the sdsmint gateway's MITM.
+// origin, through the gateway's TLS interception.
 func TestActorEgressHTTPS(t *testing.T) {
 	ctx := context.Background()
 	fixture := e2e.EgressFixture()

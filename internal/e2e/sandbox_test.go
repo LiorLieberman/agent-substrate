@@ -215,13 +215,13 @@ func TestRenderSubstrateFixtures_MicroVM(t *testing.T) {
 func TestEgressFixture(t *testing.T) {
 	t.Run("gvisor", func(t *testing.T) {
 		t.Setenv(sandboxClassEnv, "")
-		if got := EgressFixture(); got.Namespace != "ate-demo-egress-mitm" || got.Name != "egress-mitm" {
+		if got := EgressFixture(); got.Namespace != "ate-demo-egress" || got.Name != "egress" {
 			t.Errorf("EgressFixture() = %+v, want the gVisor egress demo", got)
 		}
 	})
 	t.Run("microvm", func(t *testing.T) {
 		t.Setenv(sandboxClassEnv, SandboxClassMicroVM)
-		if got := EgressFixture(); got.Namespace != "ate-demo-egress-microvm-mitm" || got.Name != "egress-microvm-mitm" {
+		if got := EgressFixture(); got.Namespace != "ate-demo-egress-microvm" || got.Name != "egress-microvm" {
 			t.Errorf("EgressFixture() = %+v, want the micro-VM egress demo", got)
 		}
 	})

@@ -35,7 +35,7 @@ import (
 
 // TestEgressDNSLookupFamily requires ALL on every dynamic forward proxy DNS
 // cache in the install tree, so a new egress variant is checked the day it is
-// added rather than the day it is installed. atenet-egress-with-sdsmint.yaml
+// added rather than the day it is installed. atenet-egress.yaml
 // says why ALL.
 func TestEgressDNSLookupFamily(t *testing.T) {
 	for _, path := range manifestPaths(t) {
@@ -84,7 +84,7 @@ func TestOverlayDiscoveryCoversTheInstaller(t *testing.T) {
 	discovered := overlayDirs(t)
 
 	want := []string{
-		filepath.Join(root, installDir, "agentgateway-egress-mitm"),
+		filepath.Join(root, installDir, "agentgateway-egress"),
 		filepath.Join(root, installDir, "agentgateway-router"),
 	}
 	for _, kind := range []bool{false, true} {

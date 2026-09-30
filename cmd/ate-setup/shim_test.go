@@ -207,8 +207,8 @@ func TestShimTranslatesFlags(t *testing.T) {
 		// The value-bearing flags were pre-scanned, so they shape every action
 		// regardless of where they appear.
 		name: "global flags apply to actions that precede them",
-		args: []string{"--deploy-atenet", "--atenet-dataplane", "agentgateway", "--cordon-control-plane"},
-		want: []string{"--atenet-dataplane=agentgateway --cordon-control-plane deploy atenet"},
+		args: []string{"--deploy-atenet", "--atenet-dataplane", "agentgateway"},
+		want: []string{"--atenet-dataplane=agentgateway deploy atenet"},
 	}, {
 		name: "cluster profile flags are forwarded in either value form",
 		args: []string{"--deploy-ate-system", "--cluster-size", "size10", "--cordon-control-plane"},
@@ -272,9 +272,9 @@ func TestShimTranslatesFlags(t *testing.T) {
 		},
 	}, {
 		name: "demo flags drop the demo- prefix",
-		args: []string{"--deploy-demo-egress-microvm-mitm", "--delete-demo-counter-microvm"},
+		args: []string{"--deploy-demo-egress-microvm", "--delete-demo-counter-microvm"},
 		want: []string{
-			"deploy demo egress-microvm-mitm",
+			"deploy demo egress-microvm",
 			"delete demo counter-microvm",
 		},
 	}, {

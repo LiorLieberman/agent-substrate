@@ -45,8 +45,6 @@ ATE_DEMOS=(
   demo-counter-microvm
   demo-egress
   demo-egress-microvm
-  demo-egress-mitm
-  demo-egress-microvm-mitm
   demo-jupyter
   demo-sandbox
   demo-claude-code-multiplex
@@ -63,9 +61,6 @@ demo_usage() {
       echo "                                                (STORAGE_CLASS names the class; it otherwise follows --setup-csi)"
       ;;
     demo-counter-microvm|demo-egress-microvm)
-      echo "  Needs hack/install-microvm-deps.sh --install to have run (cluster-wide microvm SandboxConfig)."
-      ;;
-    demo-egress-microvm-mitm)
       echo "  Needs hack/install-microvm-deps.sh --install to have run (cluster-wide microvm SandboxConfig)."
       ;;
     demo-claude-code-multiplex)

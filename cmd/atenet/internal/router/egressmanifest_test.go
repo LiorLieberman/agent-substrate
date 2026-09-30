@@ -23,10 +23,10 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// egressManifests are the envoy egress gateways ate-setup installs: the sdsmint
-// one, which terminates and re-originates the tunneled TLS.
+// egressManifests is the envoy egress gateway ate-setup installs, which
+// terminates and re-originates the tunneled TLS.
 var egressManifests = []string{
-	"../../../../manifests/ate-install/atenet-egress-with-sdsmint.yaml",
+	"../../../../manifests/ate-install/atenet-egress.yaml",
 }
 
 // TestEgressManifestsDisableTheConnectTimeout is the static-config half of

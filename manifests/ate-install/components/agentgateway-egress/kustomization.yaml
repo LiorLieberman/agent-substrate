@@ -16,9 +16,9 @@ apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 
 patches:
-  # The base is the envoy sdsmint gateway. agentgateway mints its own leaves
-  # (tls.mode: dynamicCa below), so drop the sdsmint sidecar and its volumes,
-  # and the non-root pod identity only envoy and sdsmint are set up for.
+  # The base is the envoy gateway. agentgateway mints its own leaves
+  # (tls.mode: dynamicCa below), so drop envoy's minting sidecar and its
+  # volumes, and the non-root pod identity only that pod is set up for.
   - target:
       group: apps
       version: v1

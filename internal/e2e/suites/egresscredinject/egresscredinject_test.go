@@ -13,8 +13,8 @@
 // limitations under the License.
 
 // Package egresscredinject e2e-tests egress credential injection: a matching
-// EgressPolicy https rule with a replace_headers effect makes the sdsmint
-// egress gateway's MITM leg resolve the credential through the
+// EgressPolicy https rule with a replace_headers effect makes the egress
+// gateway's MITM leg resolve the credential through the
 // k8s-credential-provider and replace the actor's placeholder header with it
 // before re-originating upstream. See TestActorEgressCredentialInjection for
 // the proof structure and how to run this locally.

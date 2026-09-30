@@ -14,7 +14,7 @@
 
 // Package egressmitm e2e-tests the trust half of MITM'd egress TLS (#871):
 // an actor that projects the egress trust bundle can complete a TLS
-// handshake with the sdsmint egress gateway's per-SNI minted leaf, using
+// handshake with the egress gateway's per-SNI minted leaf, using
 // ONLY the projected anchors. See TestActorEgressMITMTrust for the proof
 // structure and how to run this locally.
 package egressmitm
@@ -68,8 +68,8 @@ func TestActorEgressMITMTrust(t *testing.T) {
 	ctx := context.Background()
 	clients := e2e.GetClients()
 
-	// Ensure, never replace: sdsmintd signs with the pool mounted into the
-	// gateway pod, and kubelet propagates Secret updates into that mount on
+	// Ensure, never replace: the gateway signs with the pool mounted into its
+	// pod, and kubelet propagates Secret updates into that mount on
 	// its own schedule — replacing the pool here would race the propagation
 	// and flake the handshake. The install created the pool; we
 	// only wait for the reconciler-derived bundle so actor start can resolve
@@ -92,7 +92,7 @@ func TestActorEgressMITMTrust(t *testing.T) {
 
 	const origin = "https://" + egressOriginHost + "/"
 
-	// sdsmintd signs with the pool mounted into the gateway pod, and kubelet
+	// The gateway signs with the pool mounted into its pod, and kubelet
 	// propagates Secret contents into that mount on its own schedule (up to
 	// ~1 minute). In CI the pool predates the gateway pod, but a LOCAL rerun
 	// can recreate the pool moments before this fetch (a prior run's cleanup
@@ -117,7 +117,7 @@ func TestActorEgressMITMTrust(t *testing.T) {
 
 	neg := probeFetch(t, ctx, rc, id, origin, "system")
 	if neg.Error == "" {
-		t.Errorf("fetch with system roots unexpectedly succeeded (status %s): the minted leaf should chain to no public CA — is the sdsmint (MITM) gateway actually deployed, or is egress running in passthrough mode?", neg.Status)
+		t.Errorf("fetch with system roots unexpectedly succeeded (status %s): the minted leaf should chain to no public CA — is the egress gateway actually terminating TLS?", neg.Status)
 	} else if !strings.Contains(neg.Error, "certificate") && !strings.Contains(neg.Error, "x509") {
 		t.Errorf("fetch with system roots failed, but not with a certificate-verification error: %s", neg.Error)
 	}

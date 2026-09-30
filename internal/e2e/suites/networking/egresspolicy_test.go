@@ -37,7 +37,7 @@ import (
 func notTransient(status int, _ []byte) bool { return status != http.StatusServiceUnavailable }
 
 // reached stops the retry loop only on success. A lane expecting the fetch to
-// work sees more transients than the 503 above (the sdsmint leaf fails
+// work sees more transients than the 503 above (the minted leaf fails
 // verification until kubelet has propagated the CA pool, public origins
 // hiccup), all of them 502s the actor cannot tell from a denial.
 func reached(status int, _ []byte) bool { return status == http.StatusOK }
@@ -113,7 +113,7 @@ func isMitmCert(body string) bool {
 	return !strings.Contains(body, "O=Google Trust Services")
 }
 
-// TestActorEgressHTTPSByHostnameMITM: sdsmint terminates the TLS and decides
+// TestActorEgressHTTPSByHostnameMITM: the gateway terminates the TLS and decides
 // each request by name: example.com 200, example.org 403.
 func TestActorEgressHTTPSByHostnameMITM(t *testing.T) {
 	ctx := context.Background()

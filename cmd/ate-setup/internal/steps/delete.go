@@ -78,7 +78,7 @@ func (e *Env) DeleteAtenet(ctx context.Context) error {
 	for _, path := range [][]string{
 		{"atenet-router.yaml"},
 		{"components", "agentgateway", "configmap.yaml"},
-		{"atenet-egress-with-sdsmint.yaml"},
+		{"atenet-egress.yaml"},
 	} {
 		if err := e.Kube.DeletePath(ctx, e.Cfg.Manifest(path...)); err != nil {
 			return err

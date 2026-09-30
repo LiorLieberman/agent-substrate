@@ -131,7 +131,7 @@ func (e *Env) renderAtenetRouterManifest(ctx context.Context) ([]byte, error) {
 
 // atenetEgressManifestPath returns the envoy egress gateway manifest.
 func (e *Env) atenetEgressManifestPath() string {
-	return e.Cfg.Manifest("atenet-egress-with-sdsmint.yaml")
+	return e.Cfg.Manifest("atenet-egress.yaml")
 }
 
 // renderAtenetEgressManifest produces the atenet egress manifest.
@@ -146,7 +146,7 @@ func (e *Env) renderAtenetEgressManifest(ctx context.Context) ([]byte, error) {
 		if injection {
 			return nil, fmt.Errorf("--experimental-egress-credential-injection requires --atenet-dataplane=envoy")
 		}
-		return e.renderResolve(ctx, e.Cfg.Path(installDir+"/agentgateway-egress-mitm"))
+		return e.renderResolve(ctx, e.Cfg.Path(installDir+"/agentgateway-egress"))
 	}
 
 	imageReference, err := e.dockerfileImage(ctx, envoyDataplaneImage, envoyDataplaneDockefile)

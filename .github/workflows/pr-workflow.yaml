@@ -211,11 +211,11 @@ jobs:
     - name: Deploy egress demos
       # TestActorEgress in the networking suite builds its Actor from the egress
       # ActorTemplate for the class under test, so both fixtures have to exist
-      # before their respective lane runs. The MITM variants trust the CA the
+      # before their respective lane runs. The demo's actors trust the CA the
       # gateway mints its leaves from.
       run: |
-        hack/install-ate-kind.sh --deploy-demo-egress-mitm
-        hack/install-ate-kind.sh --deploy-demo-egress-microvm-mitm
+        hack/install-ate-kind.sh --deploy-demo-egress
+        hack/install-ate-kind.sh --deploy-demo-egress-microvm
     - name: Run E2E tests (gVisor)
       env:
         # Injection happens entirely inside the gateway, so the sandbox class

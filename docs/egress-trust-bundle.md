@@ -145,11 +145,11 @@ second ties the image to one cluster's CA and breaks on rotation.
 
 ## Verify
 
-`demos/egress/egress-mitm-template.yaml.tmpl` is a complete working template
-that does exactly this. Deploy it:
+`demos/egress/egress-template.yaml.tmpl` is a complete working template that
+does exactly this. Deploy it:
 
 ```bash
-./hack/install-ate.sh --deploy-demo-egress-mitm
+./hack/install-ate.sh --deploy-demo-egress
 ```
 
 Then drive an actor's egress at an HTTPS URL an `https` rule allows and
