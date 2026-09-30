@@ -129,15 +129,29 @@ func TestActorEgressMITMTrust(t *testing.T) {
 		t.Errorf("fetch with system roots failed, but not with a certificate-verification error: %s", neg.Error)
 	}
 
-	// The passthrough origin has to be validated with the system CAs, since egress gateway
-	// does not terminate TLS.
-	const passthrughOrigin = "https://" + egressOriginPassthroughHost + "/"
-	pos = probeFetch(t, ctx, rc, id, passthrughOrigin, "system")
-	if pos.Error != "" {
-		t.Fatalf("TLS passthrough with the system trust bundle failed: %s", pos.Error)
+	// The gateway relays passthrough TLS unread, so the origin's own certificate
+	// must validate with the system roots. That is also the proof it was not
+	// intercepted.
+	const passthroughOrigin = "https://" + egressOriginPassthroughHost + "/"
+	pt := probeFetch(t, ctx, rc, id, passthroughOrigin, "system")
+	if pt.Error != "" {
+		t.Fatalf("TLS passthrough to %s failed: %s — the origin's certificate did not validate against the system roots, so the connection was intercepted, misrouted, or closed", passthroughOrigin, pt.Error)
 	}
-	if pos.Status != "200" {
-		t.Fatalf("passthorugh fetch %s, status %s, want 200", passthrughOrigin, pos.Status)
+	if pt.Status != "200" {
+		t.Fatalf("passthrough fetch %s: status %s, want 200", passthroughOrigin, pt.Status)
+	}
+
+	// The rule for this name covers 8443 only, so the ClientHello on 443 is
+	// closed.
+	const wrongPortOrigin = "https://" + egressOriginPassthroughWrongPortHost + "/"
+	wrongPort := probeFetch(t, ctx, rc, id, wrongPortOrigin, "system")
+	switch {
+	case wrongPort.Error == "":
+		t.Errorf("fetch of %s succeeded with status %s, want the connection closed at the ClientHello: its passthrough rule names port 8443, not 443", wrongPortOrigin, wrongPort.Status)
+	case strings.Contains(wrongPort.Error, "certificate") || strings.Contains(wrongPort.Error, "x509"):
+		t.Errorf("fetch of %s was intercepted (certificate error %q), want the connection closed at the ClientHello", wrongPortOrigin, wrongPort.Error)
+	case wrongPort.Status != "":
+		t.Errorf("fetch of %s got status %s with error %q, want no HTTP exchange at all", wrongPortOrigin, wrongPort.Status, wrongPort.Error)
 	}
 
 	// A host outside the policy is closed at the ClientHello: expect a
@@ -158,6 +172,9 @@ func TestActorEgressMITMTrust(t *testing.T) {
 const (
 	egressOriginHost            = "example.com"
 	egressOriginPassthroughHost = "example.edu"
+	// egressOriginPassthroughWrongPortHost is allowed by passthrough on 8443
+	// only, while the probe dials 443.
+	egressOriginPassthroughWrongPortHost = "example.net"
 )
 
 type fetchResponse struct {
@@ -216,7 +233,11 @@ func createAndResumeActor(t *testing.T, ctx context.Context, clients *e2e.Client
 	}
 	// The gateway refuses every tunnel for an actor without a policy. Naming
 	// only the origin also lets the same actor show a denial.
-	e2e.EnsureEgressPolicy(t, ctx, clients, ref, e2e.EgressAllowHTTPS(egressOriginHost), e2e.EgressAllowPassthrough(egressOriginPassthroughHost))
+	e2e.EnsureEgressPolicy(t, ctx, clients, ref,
+		e2e.EgressAllowHTTPS(egressOriginHost),
+		e2e.EgressAllowPassthrough(egressOriginPassthroughHost),
+		e2e.EgressAllowPassthroughOnPorts([]int32{8443}, egressOriginPassthroughWrongPortHost),
+	)
 	t.Cleanup(func() {
 		_, _ = clients.SubstrateAPI.SuspendActor(ctx, &ateapipb.SuspendActorRequest{Actor: ref})
 		if _, err := clients.SubstrateAPI.DeleteActor(ctx, &ateapipb.DeleteActorRequest{Actor: ref}); err != nil {
