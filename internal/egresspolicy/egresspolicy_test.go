@@ -16,6 +16,7 @@ package egresspolicy
 
 import (
 	"net/netip"
+	"slices"
 	"testing"
 
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
@@ -370,6 +371,21 @@ func TestEvaluateRequest(t *testing.T) {
 			want:   Decision{Allowed: true, RuleIndex: 0},
 		},
 		{
+			// A rule is ranked by its best matching pattern, so one holding
+			// both "*" and an exact name wins the exact name and loses the
+			// rest of the domain to a labeled wildcard in another rule.
+			name:   "a rule holding star and an exact name wins the exact name",
+			policy: policy(httpRule("*", "api.google.com"), httpRule("*.google.com")),
+			dest:   host("api.google.com"),
+			want:   Decision{Allowed: true, RuleIndex: 0},
+		},
+		{
+			name:   "a rule holding star and an exact name loses other names to a labeled wildcard",
+			policy: policy(httpRule("*", "api.google.com"), httpRule("*.google.com")),
+			dest:   host("admin.google.com"),
+			want:   Decision{Allowed: true, RuleIndex: 1},
+		},
+		{
 			name:   "empty rule matches nothing",
 			policy: policy(&ateapipb.EgressRule{}, httpRule("example.com")),
 			dest:   host("example.com"),
@@ -385,34 +401,80 @@ func TestEvaluateRequest(t *testing.T) {
 	}
 }
 
-func TestHostnamePatterns(t *testing.T) {
+func httpsRuleOnPorts(ports *ateapipb.Ports, patterns ...string) *ateapipb.EgressRule {
+	return &ateapipb.EgressRule{Https: &ateapipb.HTTPSRule{Hostnames: patterns, Ports: ports}}
+}
+
+func TestSNIRules(t *testing.T) {
+	mitm := func(patterns ...string) []SNIRule {
+		rules := make([]SNIRule, len(patterns))
+		for i, p := range patterns {
+			rules[i] = SNIRule{Pattern: p, Mode: SNIModeMITM}
+		}
+		return rules
+	}
 	tests := []struct {
 		name   string
 		policy *ateapipb.EgressPolicy
-		want   []string
+		port   uint16
+		want   []SNIRule
 	}{
-		{name: "no rules", policy: &ateapipb.EgressPolicy{}},
-		{name: "http only", policy: policy(httpRule("api.example.com"))},
-		{name: "https rule", policy: policy(httpsRule("api.example.com", "*.example.org")), want: []string{"api.example.com", "*.example.org"}},
-		{name: "tls_passthrough rule", policy: policy(passthroughRule(ports(443), "tls.example.com", "*")), want: []string{"tls.example.com", "*"}},
-		{name: "https and tls_passthrough mixed with http", policy: policy(
-			httpsRule("api.example.com"),
-			httpRule("plain.example.com"),
-			passthroughRule(ports(443), "*.example.org", "foo.bar.com"),
-		), want: []string{"api.example.com", "*.example.org", "foo.bar.com"}},
-		{name: "invalid patterns dropped", policy: policy(httpsRule("good.example.com", "not a hostname")), want: []string{"good.example.com"}},
+		{name: "no rules", policy: &ateapipb.EgressPolicy{}, port: 443},
+		{name: "http rules decide requests, not connections", policy: policy(httpRule("api.example.com")), port: 80},
+		{name: "tls_passthrough is not decided yet", policy: policy(passthroughRule(ports(443), "tls.example.com", "*")), port: 443},
+		{name: "https on its default port", policy: policy(httpsRule("api.example.com", "*.example.org")), port: 443, want: mitm("api.example.com", "*.example.org")},
+		{name: "https default port covers no other", policy: policy(httpsRule("api.example.com")), port: 8443},
+		{name: "https on a named port", policy: policy(httpsRuleOnPorts(ports(8443, 9443), "api.example.com")), port: 9443, want: mitm("api.example.com")},
+		{name: "https on all ports", policy: policy(httpsRuleOnPorts(allPorts(), "api.example.com")), port: 12345, want: mitm("api.example.com")},
+		{
+			name: "only https rules, only those for the dialed port",
+			policy: policy(
+				httpsRule("api.example.com"),
+				httpsRuleOnPorts(ports(8443), "alt.example.com"),
+				httpRule("plain.example.com"),
+				passthroughRule(ports(443), "pinned.example.com"),
+			),
+			port: 443,
+			want: mitm("api.example.com"),
+		},
+		{
+			// Name first, then port: an exact name on all ports still beats a
+			// wildcard on a named port.
+			name: "most specific first",
+			policy: policy(
+				httpsRule("*"),
+				httpsRuleOnPorts(allPorts(), "a.example.com"),
+				httpsRule("*.example.com"),
+				httpsRule("b.example.com"),
+				httpsRuleOnPorts(allPorts(), "*.example.org"),
+			),
+			port: 443,
+			want: mitm("b.example.com", "a.example.com", "*.example.com", "*.example.org", "*"),
+		},
+		{
+			// Patterns are ranked one by one, not per rule: the first rule's
+			// exact name leads, the second rule's labeled wildcard follows, and
+			// the first rule's "*" comes last. So api.google.com is decided by
+			// the first rule and admin.google.com by the second, as in
+			// EvaluateRequest.
+			name:   "patterns of one rule are split by rank",
+			policy: policy(httpsRule("*", "api.google.com"), httpsRule("*.google.com")),
+			port:   443,
+			want:   mitm("api.google.com", "*.google.com", "*"),
+		},
+		{
+			name:   "ties keep policy order",
+			policy: policy(httpsRule("b.example.com", "a.example.com"), httpsRule("c.example.com")),
+			port:   443,
+			want:   mitm("b.example.com", "a.example.com", "c.example.com"),
+		},
+		{name: "invalid patterns dropped", policy: policy(httpsRule("good.example.com", "not a hostname")), port: 443, want: mitm("good.example.com")},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			compiled, _ := Compile(tc.policy)
-			got := compiled.HostnamePatterns()
-			if len(got) != len(tc.want) {
-				t.Fatalf("HostnamePatterns() = %v, want %v", got, tc.want)
-			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Errorf("HostnamePatterns()[%d] = %q, want %q", i, got[i], tc.want[i])
-				}
+			if got := compiled.SNIRules(tc.port); !slices.Equal(got, tc.want) {
+				t.Errorf("SNIRules(%d) = %v, want %v", tc.port, got, tc.want)
 			}
 		})
 	}

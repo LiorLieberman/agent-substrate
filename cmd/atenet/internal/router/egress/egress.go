@@ -15,9 +15,10 @@
 // Package egress implements the ext_proc handler for outbound actor traffic.
 // It authenticates the actor behind an egress CONNECT and authorizes what goes
 // through the tunnel against the actor's EgressPolicy. A request the gateway
-// can read is decided the way the API says: the rules in order, over the Host
-// it named and the address the actor dialed, first match wins. What the
-// gateway cannot read is decided at the CONNECT, by the address alone.
+// can read is decided the way the API says: by the most specific rule that
+// matches the Host it named on the port the actor dialed. A TLS connection is
+// decided by the dataplane at its ClientHello, against the rules this handler
+// answers the CONNECT with.
 //
 // Identity comes from the actor certificate presented in the mTLS handshake,
 // never from a request header. On the inner legs it arrives as filter state
@@ -133,11 +134,13 @@ func (h *Handler) HandleRequestHeaders(ctx context.Context, md *extproc.RequestM
 // the identity.
 //
 // The tunnel opens for an actor with a policy that has rules, with nothing to
-// dial: every connection is decided inside, request by request. Nothing is
-// decided at the CONNECT yet, so a tls_passthrough rule cannot allow a
-// connection here; until it can, the passthrough chain closes what it gets. An
-// actor with no policy, or none with rules, is refused here, where there is
-// still a response.
+// dial. The answer carries the https rules for the port the actor dialed,
+// most specific first: the dataplane decides the tunnel's TLS against them at
+// the ClientHello, and the requests inside are decided one by one. A
+// tls_passthrough rule cannot allow a connection until the gateway can forward
+// one unread, so it is left out and its names are closed rather than
+// intercepted. An actor with no policy, or none with rules, is refused here,
+// where there is still a response.
 func (h *Handler) handleConnect(ctx context.Context, md *extproc.RequestMetadata, leg string) (extproc.Result, error) {
 	// Sanity check that we were called on the Egress listener filter chain with
 	// a CONNECT.
@@ -184,30 +187,32 @@ func (h *Handler) handleConnect(ctx context.Context, md *extproc.RequestMetadata
 	if err != nil {
 		return extproc.Result{}, err
 	}
+	rules := policy.SNIRules(dest.Port)
 	slog.InfoContext(ctx, "egress tunnel opened: requests inside it are decided one by one",
-		slog.Any("actor", ref), slog.String("leg", leg), slog.String("destination", md.Host))
+		slog.Any("actor", ref), slog.String("leg", leg), slog.String("destination", md.Host), slog.Int("sniRules", len(rules)))
 	res := allow()
-	res.DynamicMetadata = connectMetadata(policy.HostnamePatterns())
+	res.DynamicMetadata = connectMetadata(rules)
 	return res, nil
 }
 
-// connectMetadata builds the dynamic metadata returned on an allowed CONNECT:
-// the policy's allowed SNI patterns under dev.ate.policy.egress.
-func connectMetadata(allowedSNIs []string) *structpb.Struct {
-	sniValues := make([]*structpb.Value, len(allowedSNIs))
-	for i, sni := range allowedSNIs {
-		sniValues[i] = structpb.NewStringValue(sni)
+// connectMetadata is the CONNECT leg's answer under
+// EgressPolicyMetadataNamespace: the rules that decide the tunnel's TLS at its
+// ClientHello, in the order the dataplane must try them. An empty list is
+// still an answer: no https rule covers the dialed port, so every ClientHello
+// is closed.
+func connectMetadata(rules []egresspolicy.SNIRule) *structpb.Struct {
+	values := make([]*structpb.Value, len(rules))
+	for i, rule := range rules {
+		values[i] = structpb.NewStructValue(&structpb.Struct{Fields: map[string]*structpb.Value{
+			extproc.EgressSNIRulePatternKey: structpb.NewStringValue(rule.Pattern),
+			extproc.EgressSNIRuleModeKey:    structpb.NewStringValue(string(rule.Mode)),
+		}})
 	}
-	fields := map[string]*structpb.Value{
-		extproc.EgressPolicyMetadataNamespace: structpb.NewStructValue(&structpb.Struct{
-			Fields: map[string]*structpb.Value{
-				extproc.EgressAllowedSNIsKey: structpb.NewListValue(&structpb.ListValue{
-					Values: sniValues,
-				}),
-			},
-		}),
-	}
-	return &structpb.Struct{Fields: fields}
+	return &structpb.Struct{Fields: map[string]*structpb.Value{
+		extproc.EgressPolicyMetadataNamespace: structpb.NewStructValue(&structpb.Struct{Fields: map[string]*structpb.Value{
+			extproc.EgressSNIRulesKey: structpb.NewListValue(&structpb.ListValue{Values: values}),
+		}}),
+	}}
 }
 
 // metadataAnswer is a one-entry answer in the egress metadata namespace.
