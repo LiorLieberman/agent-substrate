@@ -81,7 +81,6 @@ var (
 	actorIDJWTPoolFile          = pflag.String("actor-id-jwt-pool", "", "The file that contains the serialized JWT authority pool for signing actor JWTs")
 	actorJWTIssuer              = pflag.String("actor-jwt-issuer", "", "Issuer URL placed in the iss claim of actor JWTs. Relying parties fetch <issuer>/.well-known/openid-configuration to verify them. Must be https with no query or fragment. Empty means https://"+installdefaults.IDPServiceName+".<pod namespace>.svc.")
 	defaultEgressGatewayAddress = pflag.String("default-egress-gateway-address", "", "Default address (host:port) of the egress PEP that each actor's atunnel dials. Sent on every atelet Run and Restore, so it takes effect at the actor's next activation. Empty leaves actors with no TCP egress.")
-	egressGatewayAddress        = pflag.String("egress-gateway-address", "", "Deprecated: use --default-egress-gateway-address.")
 
 	actorIDCAPoolFile      = pflag.String("actor-id-ca-pool", "", "The file that contains the CA pool for signing actor JWTs")
 	podIdentityCACerts     = pflag.String("pod-identity-ca-certs", "", "The file that contains the pod-identity CA bundle, used both for verifying client certificates presented to the gRPC server and for verifying atelet serving certificates when dialing atelet. If empty, client-cert verification is disabled and atelet dials will fail.")
@@ -264,11 +263,6 @@ func main() {
 		serverboot.Fatal(ctx, "while loading the Actor ID JWT authority pool", err)
 	}
 
-	resolvedEgressGatewayAddress := *defaultEgressGatewayAddress
-	if resolvedEgressGatewayAddress == "" {
-		resolvedEgressGatewayAddress = *egressGatewayAddress
-	}
-
 	controlSrv := controlapi.NewRPCService(
 		persistence,
 		workerCache,
@@ -277,7 +271,7 @@ func main() {
 		storageClassLister,
 		ateletDialer,
 		instruments,
-		resolvedEgressGatewayAddress,
+		*defaultEgressGatewayAddress,
 		volPlugins,
 		objectStore,
 		resolvedActorJWTIssuer,
