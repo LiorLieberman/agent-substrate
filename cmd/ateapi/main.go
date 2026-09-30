@@ -78,10 +78,10 @@ var (
 	postgresSchema           = pflag.String("postgres-schema", "public", "PostgreSQL schema for Substrate tables. This overrides a search_path connection parameter.")
 	experimentalEnableAuthz  = pflag.Bool("experimental-enable-authz", false, "Enable OpenFGA authorization checks (experimental).")
 
-	actorIDJWTPoolFile                          = pflag.String("actor-id-jwt-pool", "", "The file that contains the serialized JWT authority pool for signing actor JWTs")
-	actorJWTIssuer                              = pflag.String("actor-jwt-issuer", "", "Issuer URL placed in the iss claim of actor JWTs. Relying parties fetch <issuer>/.well-known/openid-configuration to verify them. Must be https with no query or fragment. Empty means https://"+installdefaults.IDPServiceName+".<pod namespace>.svc.")
-	experimentalToBeRemovedEgressGatewayAddress = pflag.String("experimental-to-be-removed-egress-gateway-address", "", "Address of the egress PEP. Temporary flag to be removed once per-actor egress gateway configuration is supported. Empty disables tunneled egress.")
-	egressGatewayAddress                        = pflag.String("egress-gateway-address", "", "Deprecated: use --experimental-to-be-removed-egress-gateway-address.")
+	actorIDJWTPoolFile          = pflag.String("actor-id-jwt-pool", "", "The file that contains the serialized JWT authority pool for signing actor JWTs")
+	actorJWTIssuer              = pflag.String("actor-jwt-issuer", "", "Issuer URL placed in the iss claim of actor JWTs. Relying parties fetch <issuer>/.well-known/openid-configuration to verify them. Must be https with no query or fragment. Empty means https://"+installdefaults.IDPServiceName+".<pod namespace>.svc.")
+	defaultEgressGatewayAddress = pflag.String("default-egress-gateway-address", "", "Default address (host:port) of the egress PEP that each actor's atunnel dials. Sent on every atelet Run and Restore, so it takes effect at the actor's next activation. Empty leaves actors with no TCP egress.")
+	egressGatewayAddress        = pflag.String("egress-gateway-address", "", "Deprecated: use --default-egress-gateway-address.")
 
 	actorIDCAPoolFile      = pflag.String("actor-id-ca-pool", "", "The file that contains the CA pool for signing actor JWTs")
 	podIdentityCACerts     = pflag.String("pod-identity-ca-certs", "", "The file that contains the pod-identity CA bundle, used both for verifying client certificates presented to the gRPC server and for verifying atelet serving certificates when dialing atelet. If empty, client-cert verification is disabled and atelet dials will fail.")
@@ -264,7 +264,7 @@ func main() {
 		serverboot.Fatal(ctx, "while loading the Actor ID JWT authority pool", err)
 	}
 
-	resolvedEgressGatewayAddress := *experimentalToBeRemovedEgressGatewayAddress
+	resolvedEgressGatewayAddress := *defaultEgressGatewayAddress
 	if resolvedEgressGatewayAddress == "" {
 		resolvedEgressGatewayAddress = *egressGatewayAddress
 	}
