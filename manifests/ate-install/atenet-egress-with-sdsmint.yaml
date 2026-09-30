@@ -183,10 +183,9 @@ data:
                         inline_string: "%DOWNSTREAM_PEER_URI_SAN%"
                       omit_empty_values: true
               # The CONNECT leg. The sidecar authenticates the actor from its
-              # certificate (see cmd/atenet/internal/router/egress) and answers
-              # with dev.ate.policy.egress: the rules that decide the tunnel's
-              # TLS at its ClientHello, for the port the actor dialed. Fails
-              # closed if the router is down.
+              # certificate (see cmd/atenet/internal/router/egress) and returns
+              # the SNI rules in dev.ate.policy.egress. Fails closed if the
+              # router is down.
               - name: envoy.filters.http.ext_proc
                 typed_config:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
@@ -244,10 +243,8 @@ data:
                       text_format_source:
                         inline_string: "%DYNAMIC_METADATA(dev.ate.egress:passthrough_destination)%"
                       omit_empty_values: true
-                  # The CONNECT leg's answer, as JSON, for the egress-policy
-                  # listener filter on mitm_listener to decide the ClientHello
-                  # against. With no answer nothing is written, and the module
-                  # then denies every ClientHello.
+                  # SNI rules for the egress-policy module. If absent, all TLS
+                  # is denied.
                   - object_key: dev.ate.policy.egress
                     factory_key: envoy.string
                     skip_if_empty: true
@@ -271,16 +268,10 @@ data:
       # tunnelled TLS with a leaf sdsmint mints for the SNI, reads the real
       # Host, and re-originates.
       #
-      # Three chains, selected by what the tunnel actually carries and by the
-      # actor's policy. tls_inspector tags a ClientHello "tls" and reads its
-      # SNI; http_inspector looks at anything else. The egress-policy listener
-      # filter (cmd/dataplane/envoy/dynamic-modules/egress-policy) then names
-      # the chain in the dev.ate.egress.filter_chain filter state: a
-      # ClientHello whose SNI matches one of the rules the CONNECT leg answered
-      # with goes to the MITM chain, any other ClientHello is denied, and
-      # everything that is not TLS goes to the cleartext chain to be decided
-      # request by request. The filter_chain_matcher below selects on that
-      # name; "denied" names no chain, so the connection is closed.
+      # The egress-policy module (cmd/dataplane/envoy/dynamic-modules/egress-policy)
+      # writes the chain name to dev.ate.egress.filter_chain: TLS matching an
+      # SNI rule goes to MITM, other TLS is denied, and non-TLS goes to
+      # cleartext. "denied" matches no chain, so the connection is closed.
       #
       # The two HTTP chains are named so ext_proc can tell them apart
       # (xds.filter_chain_name; the names must match
@@ -298,8 +289,7 @@ data:
       # The passthrough chain is a tcp_proxy, so it has no HTTP filters of its
       # own, and it decides nothing: it dials the address the CONNECT leg
       # allowed, carried here as filter state, and closes when there is none.
-      # Nothing selects it yet: the module does not honor tls_passthrough
-      # rules until the gateway can forward a connection unread.
+      # Nothing selects it yet.
       # ---------------------------------------------------------------------
       - name: mitm_listener
         stat_prefix: mitm
@@ -308,18 +298,15 @@ data:
         # a server-speaks-first protocol -- SSH, SMTP, MySQL -- they wait for a
         # client that is itself waiting for the origin, and the tunnel deadlocks
         # until the actor's own timeout fires. Giving up quickly is the only way
-        # out: on timeout the remaining listener filters are skipped, so the
-        # egress-policy module never names a chain, the matcher finds none, and
-        # the connection is closed, which is what the policy says of a protocol
-        # the gateway cannot classify. The cost is paid only by connections
+        # out: on timeout the module is skipped, no chain matches, and the
+        # connection is closed. The cost is paid only by connections
         # that send nothing; a client that speaks is classified immediately. One
         # second is far longer than a local actor needs to emit a ClientHello,
         # and short enough to stay well inside the probe timeouts.
         listener_filters_timeout: 1s
         continue_on_listener_filters_timeout: true
-        # NR is the flag Envoy sets when no chain matched.
-        # "denied" chain is a policy denial while an empty chain is a timeout.
-        # ("denied") from a timeout (empty).
+        # Logs connections that matched no chain (NR). A "denied" chain is a
+        # policy denial; an empty one is a timeout.
         access_log:
         - name: envoy.access_loggers.file
           filter:
@@ -599,8 +586,7 @@ data:
         # The cleartext chain. Nothing to terminate and nothing to mint: the
         # Host header is already in the clear, so this leg reads the
         # destination directly rather than from a certificate it issued.
-        # Everything the module did not see as TLS lands here, HTTP or not; a
-        # stream that is not HTTP fails in the codec.
+        # Non-HTTP streams fail in the codec.
         - name: egress_cleartext
           filters:
           - name: envoy.filters.network.http_connection_manager
@@ -718,11 +704,8 @@ data:
                 typed_config:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 
-        # The passthrough chain, selected only by a "passthrough" verdict,
-        # which the module does not give yet. Nothing here decides: tcp_proxy
-        # dials the original_dst_address filter state the CONNECT leg produced,
-        # and with none present the connection is closed before a byte is
-        # relayed (flags UH in the log).
+        # The passthrough chain, unused for now. tcp_proxy dials
+        # original_dst_address and closes the connection if it is unset (UH).
         - name: egress_passthrough
           filters:
           - name: envoy.filters.network.tcp_proxy
@@ -768,13 +751,9 @@ data:
             explicit_http_config:
               http_protocol_options: {}
         # Copies every filter state object shared with the upstream onto the
-        # internal listener's downstream connection. The objects that ride this
-        # hop are all set on the CONNECT leg above: dev.ate.actor.identity and
-        # dev.ate.connect.authority, which the policy ext_proc and the access
-        # logs read; dev.ate.policy.egress, which the egress-policy listener
-        # filter decides the ClientHello against; and original_dst_address,
-        # present only when a connection may be forwarded unread, which the
-        # passthrough chain dials.
+        # internal listener's downstream connection: dev.ate.actor.identity,
+        # dev.ate.connect.authority, dev.ate.policy.egress, and
+        # original_dst_address, all set on the CONNECT leg above.
         #
         # Without this none of them reaches mitm_listener, and nothing reports it:
         # the request proxies and every read resolves to the zero value, which

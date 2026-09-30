@@ -371,9 +371,7 @@ func TestEvaluateRequest(t *testing.T) {
 			want:   Decision{Allowed: true, RuleIndex: 0},
 		},
 		{
-			// A rule is ranked by its best matching pattern, so one holding
-			// both "*" and an exact name wins the exact name and loses the
-			// rest of the domain to a labeled wildcard in another rule.
+			// A rule ranks by its best matching pattern.
 			name:   "a rule holding star and an exact name wins the exact name",
 			policy: policy(httpRule("*", "api.google.com"), httpRule("*.google.com")),
 			dest:   host("api.google.com"),
@@ -438,8 +436,7 @@ func TestSNIRules(t *testing.T) {
 			want: mitm("api.example.com"),
 		},
 		{
-			// Name first, then port: an exact name on all ports still beats a
-			// wildcard on a named port.
+			// Name specificity outranks port specificity.
 			name: "most specific first",
 			policy: policy(
 				httpsRule("*"),
@@ -452,10 +449,7 @@ func TestSNIRules(t *testing.T) {
 			want: mitm("b.example.com", "a.example.com", "*.example.com", "*.example.org", "*"),
 		},
 		{
-			// Patterns are ranked one by one, not per rule: the first rule's
-			// exact name leads, the second rule's labeled wildcard follows, and
-			// the first rule's "*" comes last. So api.google.com is decided by
-			// the first rule and admin.google.com by the second, as in
+			// Patterns rank individually, not per rule, matching
 			// EvaluateRequest.
 			name:   "patterns of one rule are split by rank",
 			policy: policy(httpsRule("*", "api.google.com"), httpsRule("*.google.com")),

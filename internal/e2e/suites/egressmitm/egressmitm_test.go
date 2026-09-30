@@ -129,12 +129,9 @@ func TestActorEgressMITMTrust(t *testing.T) {
 		t.Errorf("fetch with system roots failed, but not with a certificate-verification error: %s", neg.Error)
 	}
 
-	// The policy names example.com only, so another host is refused at the
-	// ClientHello: the gateway closes the connection before any HTTP, so the
-	// probe sees a transport error and no status. The error text is Go's and
-	// depends on how the close arrives (EOF, reset, a TLS alert), so only its
-	// presence is checked. A certificate error would mean the name was
-	// intercepted rather than refused.
+	// A host outside the policy is closed at the ClientHello: expect a
+	// transport error, not a certificate error or an HTTP status. The error
+	// text varies, so only its presence is checked.
 	denied := probeFetch(t, ctx, rc, id, "https://example.org/", "bundle")
 	switch {
 	case denied.Error == "":

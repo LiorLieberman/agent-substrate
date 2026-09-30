@@ -59,16 +59,10 @@ const (
 	// allowed it. The outer chain copies it into the ORIGINAL_DST filter state;
 	// absent, a TLS or opaque connection has no upstream and is closed.
 	EgressPassthroughDestinationKey = "passthrough_destination"
-	// EgressPolicyMetadataNamespace is the dynamic-metadata namespace the
-	// CONNECT leg answers in with the rules that decide the tunnel's TLS at
-	// its ClientHello. The outer chain copies the namespace, as JSON, into
-	// filter state under the same key, shared with the inner listener, where
-	// the egress-policy listener filter
-	// (cmd/dataplane/envoy/dynamic-modules/egress-policy) reads it. The JSON
-	// is that module's input: {"rules": [{"pattern": ..., "mode": ...}]}, the
-	// https rules for the port the actor dialed, most specific first, so the
-	// first pattern matching the SNI decides. The modes are
-	// egresspolicy.SNIMode values.
+	// EgressPolicyMetadataNamespace holds the SNI rules returned on CONNECT.
+	// The outer chain copies it as JSON into filter state of the same name for
+	// the egress-policy module: {"rules": [{"pattern": ..., "mode": ...}]},
+	// most specific first.
 	EgressPolicyMetadataNamespace = "dev.ate.policy.egress"
 	// EgressSNIRulesKey, under EgressPolicyMetadataNamespace, is the ordered
 	// list of rules; EgressSNIRulePatternKey and EgressSNIRuleModeKey are the
@@ -77,21 +71,16 @@ const (
 	EgressSNIRulePatternKey = "pattern"
 	EgressSNIRuleModeKey    = "mode"
 
-	// EgressFilterChainFilterStateKey is the filter state the egress-policy
-	// listener filter sets on the inner listener: the name of the chain the
-	// connection belongs on, which the sdsmint manifest's filter_chain_matcher
-	// selects on. The values are the module's verdicts, and the manifest
-	// tests hold the matcher to them.
+	// EgressFilterChainFilterStateKey holds the egress-policy module's verdict:
+	// the filter chain name the sdsmint manifest's matcher selects on.
 	EgressFilterChainFilterStateKey = "dev.ate.egress.filter_chain"
-	// EgressFilterChainMITM: a ClientHello an https rule allows, terminated
-	// and decided per request on EgressTLSMITMFilterChainName.
+	// EgressFilterChainMITM: TLS terminated on EgressTLSMITMFilterChainName.
 	EgressFilterChainMITM = "mitm"
-	// EgressFilterChainPassthrough: forwarded unread. No verdict says it yet.
+	// EgressFilterChainPassthrough: forwarded unread. Unused for now.
 	EgressFilterChainPassthrough = "passthrough"
-	// EgressFilterChainCleartext: not TLS, decided per request on
-	// EgressCleartextFilterChainName.
+	// EgressFilterChainCleartext: not TLS, EgressCleartextFilterChainName.
 	EgressFilterChainCleartext = "cleartext"
-	// EgressFilterChainDenied names no chain, so the connection is closed.
+	// EgressFilterChainDenied matches no chain; the connection is closed.
 	EgressFilterChainDenied = "denied"
 	// EgressDialKey, under EgressMetadataNamespace, is a request leg's answer
 	// for an allowed request: where it goes. The manifests' routes match on
@@ -131,9 +120,7 @@ const FilterChainNameAttribute = "xds.filter_chain_name"
 // format string that reads EgressPassthroughDestinationKey back out.
 const EgressPassthroughDestinationFormat = "%DYNAMIC_METADATA(" + EgressMetadataNamespace + ":" + EgressPassthroughDestinationKey + ")%"
 
-// EgressPolicyMetadataFormat is the set_filter_state format string that
-// renders the CONNECT leg's whole EgressPolicyMetadataNamespace answer as the
-// JSON the egress-policy listener filter parses.
+// EgressPolicyMetadataFormat renders EgressPolicyMetadataNamespace as JSON.
 const EgressPolicyMetadataFormat = "%DYNAMIC_METADATA(" + EgressPolicyMetadataNamespace + ")%"
 
 // OriginalDstFilterStateKey is Envoy's filter-state key for the address an

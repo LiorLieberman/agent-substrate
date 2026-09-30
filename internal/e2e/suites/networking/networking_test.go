@@ -144,11 +144,8 @@ func TestActorEgress(t *testing.T) {
 }
 
 // TestActorEgressHTTPS covers the same path as TestActorEgress with a TLS
-// origin. The sdsmint gateway decides the ClientHello against the policy, here
-// an https rule for every name, terminates it with a leaf minted for the SNI,
-// decides the request inside, and re-originates TLS to the origin. The MITM
-// fixture trusts the gateway CA. The plain gateway closes every TLS
-// connection, so this runs only against sdsmint.
+// origin, through the sdsmint gateway's MITM. The plain gateway closes all TLS,
+// so this runs only against sdsmint.
 func TestActorEgressHTTPS(t *testing.T) {
 	if !egressMITM() {
 		t.Skip("covers the sdsmint gateway; set E2E_EGRESS_MITM")

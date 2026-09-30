@@ -14,11 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Runs the unit tests of every Envoy dynamic module under
-# cmd/dataplane/envoy/dynamic-modules. They are Rust, so `go test ./...` never
-# reaches them. Needs cargo, plus clang and libclang-dev for the SDK's bindgen
-# step; cmd/dataplane/envoy/Dockerfile builds with the same. A module that ran
-# no tests fails, so a broken wiring cannot pass as green.
+# Runs the Rust unit tests of every Envoy dynamic module. Needs cargo, clang,
+# and libclang-dev. Fails if a module runs no tests.
 
 set -o errexit -o nounset -o pipefail
 

@@ -1,4 +1,4 @@
-# Envoy egress-policy listener filter
+# Envoy Substrate Egress Policy Implementation - Rust Dynamic Module
 
 An Envoy dynamic module, written in Rust, that runs as a listener filter on
 the sdsmint egress gateway's inner listener and names the filter chain each

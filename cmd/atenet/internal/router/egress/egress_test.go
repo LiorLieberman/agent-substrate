@@ -337,10 +337,8 @@ func passthroughDestinationOf(res extproc.Result) string {
 	return res.DynamicMetadata.GetFields()[extproc.EgressMetadataNamespace].GetStructValue().GetFields()[extproc.EgressPassthroughDestinationKey].GetStringValue()
 }
 
-// The CONNECT opens for any policy with rules, with nothing to dial, and
-// answers with the rules that decide the tunnel's TLS at its ClientHello: the
-// https rules for the port the actor dialed, most specific first. A
-// tls_passthrough rule is not among them yet.
+// The CONNECT opens for any policy with rules and returns the https SNI rules
+// for the dialed port, most specific first.
 func TestConnectLegOpensForAnyRules(t *testing.T) {
 	ca := newTestCA(t, "actor-identity-ca")
 	leaf := ca.issueActorCert(t, "spiffe://substrate-actor.local/ateom-for-actor/foo/bar", actorCertOptions{})
@@ -398,8 +396,7 @@ func TestConnectLegOpensForAnyRules(t *testing.T) {
 	}
 }
 
-// sniRulesOf reads the SNI rules a CONNECT decision handed back under
-// dev.ate.policy.egress, in the order the dataplane will try them.
+// sniRulesOf reads the SNI rules from a CONNECT result.
 func sniRulesOf(t *testing.T, res extproc.Result) []egresspolicy.SNIRule {
 	t.Helper()
 	policyStruct := res.DynamicMetadata.GetFields()[extproc.EgressPolicyMetadataNamespace].GetStructValue()

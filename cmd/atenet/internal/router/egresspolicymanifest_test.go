@@ -332,9 +332,7 @@ func TestEgressManifestsConnectLegDecidesThePassthroughDestination(t *testing.T)
 // Every inner chain without an HCM is a passthrough chain: a plain tcp_proxy
 // to the ORIGINAL_DST cluster, dialing the filter state the CONNECT leg's
 // answer produced and nothing else. The plain gateway needs one per transport
-// protocol; on sdsmint the egress-policy module's verdict selects the chain
-// (see TestEgressManifestsInnerListenerSelectsOnTheModuleVerdict), and only
-// one passthrough chain is left for it to name.
+// protocol; sdsmint needs one, selected by the egress-policy module.
 var wantPassthroughChains = map[string][]string{
 	egressManifests[0]: {"egress_passthrough", "egress_tls_passthrough"},
 	egressManifests[1]: {"egress_passthrough"},
@@ -630,8 +628,7 @@ func mustJSON(t *testing.T, n node) string {
 	return string(j)
 }
 
-// sdsmintManifest is the gateway whose inner listener takes its chain from the
-// egress-policy listener filter's verdict.
+// sdsmintManifest is the gateway that runs the egress-policy module.
 var sdsmintManifest = egressManifests[1]
 
 // mitmListener returns the sdsmint manifest's inner listener.
@@ -644,14 +641,9 @@ func mitmListener(t *testing.T, tree node) node {
 	return l
 }
 
-// The inner listener's chain is chosen from the verdict the egress-policy
-// listener filter (cmd/dataplane/envoy/dynamic-modules/egress-policy) writes
-// to filter state, so the matcher must key on that filter state and map every
-// verdict the module gives: the allowing ones to the chain the handler knows
-// by that name, the denying one to no chain at all. The module can only judge
-// what the inspectors before it found, so it must run after both. Envoy
-// ignores a chain's own filter_chain_match once a matcher is present, so none
-// may be left to suggest otherwise.
+// The matcher must select on the module's verdict and map every verdict, with
+// "denied" mapping to no chain. The module runs after both inspectors, and no
+// chain keeps a filter_chain_match, which Envoy ignores once a matcher is set.
 func TestEgressManifestsInnerListenerSelectsOnTheModuleVerdict(t *testing.T) {
 	tree := bootstrapTree(t, sdsmintManifest)
 	l := mitmListener(t, tree)
@@ -699,11 +691,8 @@ func TestEgressManifestsInnerListenerSelectsOnTheModuleVerdict(t *testing.T) {
 	}
 }
 
-// The CONNECT leg's answer under dev.ate.policy.egress is what the
-// egress-policy module decides a ClientHello against, so the outer ext_proc
-// must admit that namespace, and the outer chain must copy it, after ext_proc
-// ran, into filter state under the same key as the string the module parses,
-// shared with the inner listener.
+// The outer ext_proc must accept dev.ate.policy.egress, and the outer chain
+// must copy it after ext_proc into shared filter state for the module.
 func TestEgressManifestsConnectLegHandsTheSNIRulesToTheInnerListener(t *testing.T) {
 	tree := bootstrapTree(t, sdsmintManifest)
 	outer := outerChain(t, tree)
@@ -753,11 +742,9 @@ func TestEgressManifestsConnectLegHandsTheSNIRulesToTheInnerListener(t *testing.
 	}
 }
 
-// A connection the module denies matches no chain, so no chain's access log
-// sees it: the listener's own access log is its only record. It must exist, be
-// confined to connections that got no chain (Envoy flags them NR), and name the
-// SNI, the actor, and the verdict, which tells a policy denial from a sniff
-// timeout.
+// Denied connections match no chain, so the listener access log is their only
+// record. It must log only NR connections and include the SNI, actor, and
+// verdict.
 func TestEgressManifestsInnerListenerLogsDeniedConnections(t *testing.T) {
 	tree := bootstrapTree(t, sdsmintManifest)
 	logs := list(mitmListener(t, tree), "access_log")

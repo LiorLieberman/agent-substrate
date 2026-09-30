@@ -14,11 +14,8 @@
 
 // Package egress implements the ext_proc handler for outbound actor traffic.
 // It authenticates the actor behind an egress CONNECT and authorizes what goes
-// through the tunnel against the actor's EgressPolicy. A request the gateway
-// can read is decided the way the API says: by the most specific rule that
-// matches the Host it named on the port the actor dialed. A TLS connection is
-// decided by the dataplane at its ClientHello, against the rules this handler
-// answers the CONNECT with.
+// through the tunnel against the actor's EgressPolicy. The dataplane decides
+// TLS at the ClientHello using the SNI rules returned on CONNECT.
 //
 // Identity comes from the actor certificate presented in the mTLS handshake,
 // never from a request header. On the inner legs it arrives as filter state
@@ -133,14 +130,8 @@ func (h *Handler) HandleRequestHeaders(ctx context.Context, md *extproc.RequestM
 // certificate atunnel presented. Nothing the actor can write contributes to
 // the identity.
 //
-// The tunnel opens for an actor with a policy that has rules, with nothing to
-// dial. The answer carries the https rules for the port the actor dialed,
-// most specific first: the dataplane decides the tunnel's TLS against them at
-// the ClientHello, and the requests inside are decided one by one. A
-// tls_passthrough rule cannot allow a connection until the gateway can forward
-// one unread, so it is left out and its names are closed rather than
-// intercepted. An actor with no policy, or none with rules, is refused here,
-// where there is still a response.
+// It returns the SNI rules for the dialed port. Actors without policy rules
+// are refused here.
 func (h *Handler) handleConnect(ctx context.Context, md *extproc.RequestMetadata, leg string) (extproc.Result, error) {
 	// Sanity check that we were called on the Egress listener filter chain with
 	// a CONNECT.
@@ -195,11 +186,8 @@ func (h *Handler) handleConnect(ctx context.Context, md *extproc.RequestMetadata
 	return res, nil
 }
 
-// connectMetadata is the CONNECT leg's answer under
-// EgressPolicyMetadataNamespace: the rules that decide the tunnel's TLS at its
-// ClientHello, in the order the dataplane must try them. An empty list is
-// still an answer: no https rule covers the dialed port, so every ClientHello
-// is closed.
+// connectMetadata encodes the SNI rules for EgressPolicyMetadataNamespace.
+// An empty list denies all TLS.
 func connectMetadata(rules []egresspolicy.SNIRule) *structpb.Struct {
 	values := make([]*structpb.Value, len(rules))
 	for i, rule := range rules {

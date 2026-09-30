@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The egress-policy listener filter names the filter chain a tunneled
-//! connection belongs on, from what the inspectors before it found and the
-//! rules the CONNECT leg answered with. See the README in this directory.
+//! The egress-policy listener filter picks the filter chain for a tunneled
+//! connection. See the README in this directory.
 
 use envoy_proxy_dynamic_modules_rust_sdk::{
   abi::envoy_dynamic_module_type_on_listener_filter_status,
@@ -23,55 +22,47 @@ use envoy_proxy_dynamic_modules_rust_sdk::{
 };
 use serde::Deserialize;
 
-/// Filter state the CONNECT leg's ext_proc answer is copied into: the rules
-/// that decide this connection's TLS, as JSON. The shape is fixed by
+/// Filter state holding the SNI rules as JSON. See
 /// EgressPolicyMetadataNamespace in cmd/atenet/internal/router/extproc.
 pub const ATE_POLICY_EGRESS: &[u8] = b"dev.ate.policy.egress";
 
-/// Filter state this filter writes: the name of the chain the connection
-/// belongs on. The listener's filter_chain_matcher selects on it.
+/// Filter state this filter writes the chosen chain name to.
 pub const ATE_EGRESS_FILTER_CHAIN: &[u8] = b"dev.ate.egress.filter_chain";
 
-/// Verdict for TLS an https rule allows: terminated and decided per request.
+/// Verdict for TLS an https rule allows.
 pub const ATE_EGRESS_FILTER_CHAIN_MITM: &str = "mitm";
 
-/// Verdict for anything that is not TLS: decided per request in the clear.
+/// Verdict for anything that is not TLS.
 pub const ATE_EGRESS_FILTER_CHAIN_CLEARTEXT: &str = "cleartext";
 
-/// Verdict for a connection no rule allows. No chain has this name, so the
-/// connection is closed.
+/// Verdict for a denied connection. No chain has this name.
 pub const ATE_EGRESS_FILTER_CHAIN_DENIED: &str = "denied";
 
 /// Mode of a rule whose match terminates the connection.
 pub const SNI_MODE_MITM: &str = "mitm";
 
-/// Transport protocol tls_inspector detects for a ClientHello.
+/// Transport protocol tls_inspector sets for TLS.
 const TRANSPORT_TLS: &str = "tls";
 
 /// Transport protocol Envoy assumes when no inspector detected one.
 const TRANSPORT_RAW_BUFFER: &str = "raw_buffer";
 
-/// The rules that decide a connection's TLS at its ClientHello.
+/// The SNI rules for a connection.
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct EgressPolicy {
-  /// Most specific first, as the gateway orders them: a pattern without a
-  /// wildcard before one with, then a rule naming its ports before one naming
-  /// all of them. The first pattern that matches the SNI decides.
+  /// Most specific first; the first match wins.
   pub rules: Vec<SniRule>,
 }
 
-/// One pattern and what the connection becomes when it is the first to match.
+/// A pattern and the mode applied when it matches.
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct SniRule {
   pub pattern: String,
   pub mode: String,
 }
 
-/// Reports whether `hostname`, lowercase and without a trailing dot, matches
-/// `pattern` in the policy's grammar: "*" matches every name, "*.suffix"
-/// exactly one non-empty leftmost label, and anything else the whole name.
-/// The same rules as HostnamePattern.Matches in internal/egresspolicy, which
-/// decides the requests inside the connection.
+/// Reports whether a normalized `hostname` matches `pattern`. Must agree with
+/// HostnamePattern.Matches in internal/egresspolicy.
 pub fn pattern_matches(pattern: &str, hostname: &str) -> bool {
   if hostname.is_empty() {
     return false;
@@ -91,9 +82,7 @@ pub fn pattern_matches(pattern: &str, hostname: &str) -> bool {
   pattern == hostname
 }
 
-/// Puts an SNI in the form patterns are written in: ASCII lowercase, one
-/// trailing dot removed. Only ASCII is folded, as the gateway does, so a
-/// non-ASCII spelling cannot match a pattern for a different name.
+/// ASCII-lowercases an SNI and strips one trailing dot, as the gateway does.
 fn normalize_sni(sni: &str) -> String {
   let lower = sni.to_ascii_lowercase();
   match lower.strip_suffix('.') {
@@ -102,10 +91,8 @@ fn normalize_sni(sni: &str) -> String {
   }
 }
 
-/// What the transport protocol alone says about a connection. TLS is decided
-/// on its SNI, so nothing yet. No detected transport, or raw_buffer, is
-/// cleartext for the HTTP chain to police request by request. Anything else
-/// is a transport nothing here knows, and is closed.
+/// Returns the verdict from the transport alone, or None for TLS, which is
+/// decided by SNI. Unknown transports are denied.
 pub fn transport_verdict(transport: Option<&str>) -> Option<&'static str> {
   match transport {
     Some(TRANSPORT_TLS) => None,
@@ -114,9 +101,7 @@ pub fn transport_verdict(transport: Option<&str>) -> Option<&'static str> {
   }
 }
 
-/// Decides a TLS connection: the mode of the first rule matching its SNI.
-/// Denied when there is no SNI, no policy, no match, or a mode this filter
-/// does not know.
+/// Returns the mode of the first rule matching the SNI, or denied.
 pub fn tls_verdict(policy: Option<&EgressPolicy>, sni: Option<&str>) -> &'static str {
   let (Some(policy), Some(sni)) = (policy, sni) else {
     return ATE_EGRESS_FILTER_CHAIN_DENIED;
@@ -159,8 +144,7 @@ impl<ELF: EnvoyListenerFilter> ListenerFilter<ELF> for EgressPolicyFilter {
         let sni = envoy_filter
           .get_requested_server_name()
           .map(|value| String::from_utf8_lossy(value.as_slice()).into_owned());
-        // Unparseable rules deny, like absent ones: nothing is allowed by
-        // guesswork.
+        // Unparseable rules deny, like absent ones.
         let policy = envoy_filter
           .get_filter_state_bytes(ATE_POLICY_EGRESS)
           .and_then(|value| serde_json::from_slice::<EgressPolicy>(value.as_slice()).ok());
@@ -301,9 +285,7 @@ mod tests {
 
   #[test]
   fn test_tls_verdict_first_match_decides() {
-    // The gateway orders the rules most specific first; this filter does not
-    // rank them again, so the first match is final even when its mode is one
-    // this filter does not know, which denies.
+    // The first match is final, even with an unknown mode.
     let unknown_first = policy(&[("*.example.com", "not-a-mode"), ("api.example.com", SNI_MODE_MITM)]);
     assert_eq!(
       tls_verdict(Some(&unknown_first), Some("api.example.com")),
@@ -369,7 +351,7 @@ mod tests {
   }
 
   /// Runs on_accept for a connection with the given detected transport,
-  /// asserting the verdict written. Neither the SNI nor the policy is read.
+  /// asserting the verdict written.
   fn assert_transport_verdict(transport: Option<&'static [u8]>, want: &'static str) {
     let config = new_filter_config();
     let mut mock_filter = MockEnvoyListenerFilter::new();

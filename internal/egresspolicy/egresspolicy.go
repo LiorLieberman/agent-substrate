@@ -16,11 +16,8 @@
 // destination. ateapi validates patterns with the same parser the gateway
 // matches with, so the two cannot drift.
 //
-// A TLS connection is decided at its ClientHello by the dataplane, against
-// the SNIRules the gateway hands it when the tunnel opens. The requests the
-// gateway can read are decided here, on the authority, plus the SNI of the
-// connection for https. A tls_passthrough rule matches nothing until the
-// gateway can forward a connection unread.
+// Requests are decided here; TLS connections are decided by the dataplane
+// against SNIRules. tls_passthrough rules match nothing for now.
 //
 // The package is pure: no I/O, no logging.
 package egresspolicy
@@ -166,33 +163,23 @@ func (r compiledRule) matchesPort(port uint16) bool {
 	return r.anyPort || slices.Contains(r.ports, port)
 }
 
-// SNIMode is what a TLS connection becomes when an SNIRule is the first to
-// match its ClientHello. The dataplane selects the connection's filter chain
-// from it, so the values are part of its contract; see
-// cmd/dataplane/envoy/dynamic-modules/egress-policy.
+// SNIMode is how a TLS connection is handled when an SNIRule matches. Values
+// must match cmd/dataplane/envoy/dynamic-modules/egress-policy.
 type SNIMode string
 
-// SNIModeMITM terminates the connection with a certificate minted for the SNI
-// and decides the requests inside it against the https rules.
+// SNIModeMITM terminates TLS and decides each request inside.
 const SNIModeMITM SNIMode = "mitm"
 
-// SNIRule is one pattern the dataplane matches a ClientHello's SNI against,
-// and the mode of the connection when it is the first to match.
+// SNIRule is an SNI pattern and the mode applied when it matches first.
 type SNIRule struct {
 	Pattern string
 	Mode    SNIMode
 }
 
-// SNIRules returns the rules that decide a TLS connection to port at its
-// ClientHello, most specific first, so that the first pattern matching the
-// SNI is the deciding rule under the API's precedence: a pattern without a
-// wildcard before one with, then a rule naming its ports before one naming
-// all of them. Rules that tie keep policy order.
-//
-// Only https rules are returned. A tls_passthrough rule cannot be honored
-// until the gateway can forward a connection unread, and listing it here would
-// intercept a name the policy said not to decrypt; left out, its names are
-// closed at the ClientHello instead.
+// SNIRules returns the https rules for port, most specific first: exact names
+// before wildcards, then named ports before all ports. Ties keep policy order.
+// tls_passthrough rules are left out so their names are denied, not
+// intercepted.
 func (p *Policy) SNIRules(port uint16) []SNIRule {
 	type ranked struct {
 		rule SNIRule
