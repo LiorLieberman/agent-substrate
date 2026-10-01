@@ -90,11 +90,11 @@ var withPlaceholder = []string{"header=" + url.QueryEscape("Authorization:"+plac
 // The gate: this needs the egress gateway deployed with injection enabled
 // plus the k8s-credential-provider, which the suite deploys itself. Locally:
 //
-//	hack/install-ate-kind.sh --deploy-atenet --experimental-egress-credential-injection
+//	hack/install-ate-kind.sh --deploy-atenet --credential-provider-name=ate-secret://k8s.io
 //	E2E_EGRESS_CREDINJECT=1 hack/run-e2e-kind.sh ./internal/e2e/suites/egresscredinject -v -args --no-color
 func TestActorEgressCredentialInjection(t *testing.T) {
 	if os.Getenv("E2E_EGRESS_CREDINJECT") == "" {
-		t.Skip("needs the egress gateway with credential injection: deploy with hack/install-ate-kind.sh --deploy-atenet --experimental-egress-credential-injection, then set E2E_EGRESS_CREDINJECT=1")
+		t.Skip("needs the egress gateway with credential injection: deploy with hack/install-ate-kind.sh --deploy-atenet --credential-provider-name=ate-secret://k8s.io, then set E2E_EGRESS_CREDINJECT=1")
 	}
 	env, err := e2e.CheckEnv("BUCKET_NAME", "KO_DOCKER_REPO")
 	if err != nil {
@@ -231,7 +231,7 @@ func assertEchoedAuthorization(t *testing.T, step string, resp fetchResponse) st
 		t.Fatalf("%s: TLS through the MITM egress gateway failed: %s", step, resp.Error)
 	}
 	if resp.Status != "200" {
-		t.Fatalf("%s: status %s, want 200 (an injection failure would deny with 403/500/503; is the provider deployed and the gateway installed with --experimental-egress-credential-injection?) body %q", step, resp.Status, resp.Body)
+		t.Fatalf("%s: status %s, want 200 (an injection failure would deny with 403/500/503; is the provider deployed and the gateway installed with --credential-provider-name=ate-secret://k8s.io?) body %q", step, resp.Status, resp.Body)
 	}
 	return decodeEchoedHeaders(t, step, resp.Body)["Authorization"]
 }

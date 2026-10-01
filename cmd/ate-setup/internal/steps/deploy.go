@@ -64,8 +64,12 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 	if err := e.RequireCanonicalNamespace("deploy ate-system"); err != nil {
 		return err
 	}
-	// Fail fast on an unusable build version before touching the cluster.
+	// Fail fast on an unusable build version or a missing credential provider
+	// selection before touching the cluster.
 	if _, _, err := e.SubstrateVersion(); err != nil {
+		return err
+	}
+	if _, err := e.Cfg.CredentialProvider(); err != nil {
 		return err
 	}
 	// Likewise the CSI request, even though it is only acted on partway
@@ -365,6 +369,10 @@ func (e *Env) DeployAtelet(ctx context.Context) error {
 func (e *Env) DeployAtenet(ctx context.Context) error {
 	log.Step("deploy_atenet")
 
+	// Before anything is applied: the egress render needs the answer.
+	if _, err := e.Cfg.CredentialProvider(); err != nil {
+		return err
+	}
 	if err := e.EnsureCRDs(ctx); err != nil {
 		return err
 	}

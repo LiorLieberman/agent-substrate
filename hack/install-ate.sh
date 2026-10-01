@@ -97,18 +97,18 @@ usage() {
   echo "  --experimental-additional-egress-extproc-service NS/SVC:PORT"
   echo "                                         Run an additional ext_proc authorization filter, served by that Service."
   echo "                                         Requires --atenet-dataplane=envoy."
-  echo "  --experimental-egress-credential-injection"
-  echo "                                         Point the egress gateway's MITM-leg handler at a credential provider, so a"
-  echo "                                         matching EgressPolicy rule injects its credential. A modifier applied when"
-  echo "                                         the gateway is deployed (e.g. with --deploy-atenet); the credential provider"
-  echo "                                         itself is deployed separately. Requires --atenet-dataplane=envoy."
-  echo "  --credential-provider-name NAME        Provider the injector serves, as a ate-secret:// prefix"
-  echo "                                         (default ate-secret://k8s.io). Only meaningful with"
-  echo "                                         --experimental-egress-credential-injection. (experimental)"
+  echo ""
+  echo "Egress credential injection (required by --deploy-ate-system and --deploy-atenet):"
+  echo ""
+  echo "  --credential-provider-name NAME        Credential provider the egress gateway injects credentials from, or"
+  echo "                                         ATE_CREDENTIAL_PROVIDER_NAME. 'off' leaves injection off;"
+  echo "                                         'ate-secret://k8s.io' is the bundled Kubernetes Secrets provider; any"
+  echo "                                         other ate-secret:// prefix names a provider of your own. Requires"
+  echo "                                         --atenet-dataplane=envoy unless 'off'."
   echo "  --credential-provider-address HOST:PORT"
-  echo "                                         Address the egress gateway dials the credential provider at"
-  echo "                                         (default k8s-credential-provider.ate-system.svc:50051). Only meaningful with"
-  echo "                                         --experimental-egress-credential-injection. (experimental)"
+  echo "                                         Address the egress gateway dials the credential provider at. Required"
+  echo "                                         for any provider but the bundled one (default"
+  echo "                                         k8s-credential-provider.ate-system.svc:50051)."
   echo ""
   echo "Infrastructure components:"
   echo ""
@@ -264,9 +264,6 @@ for ((i = 0; i < ${#prescan_args[@]}; i++)); do
       fi
       GLOBAL_FLAGS+=("--experimental-additional-egress-extproc-service=${prescan_args[$((i + 1))]}")
       ;;
-    --experimental-egress-credential-injection)
-      GLOBAL_FLAGS+=(--experimental-egress-credential-injection)
-      ;;
     --credential-provider-name=*) GLOBAL_FLAGS+=("${prescan_args[i]}") ;;
     --credential-provider-name)
       if (( i + 1 >= ${#prescan_args[@]} )); then
@@ -363,7 +360,7 @@ while [[ "$#" -gt 0 ]]; do
     --atenet-dataplane=*|--podcert-workers-per-signer=*|--rollout-timeout=*|--otlp-endpoint=*) ;;
     --cluster-size=*|--cordon-control-plane|--cordon-control-plane=*) ;;
     --experimental-additional-egress-extproc-service=*) ;;
-    --experimental-egress-credential-injection|--credential-provider-name=*|--credential-provider-address=*) ;;
+    --credential-provider-name=*|--credential-provider-address=*) ;;
     --benchmark-worker-count=*|--benchmark-sandbox-class=*|--benchmark-actor-memory=*) ;;
 
     --deploy-ate-system) ate_setup deploy ate-system "--setup-csi=${SETUP_CSI}" ;;

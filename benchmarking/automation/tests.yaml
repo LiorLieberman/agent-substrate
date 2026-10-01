@@ -50,6 +50,8 @@
 #   ateArgs        Optional. List of strings appended verbatim to
 #                  `hack/install-ate.sh --deploy-ate-system` when this
 #                  test's substrate is deployed (e.g. ["--atenet-dataplane=agentgateway"]).
+#                  The deploy requires --credential-provider-name; set it
+#                  here or as ATE_CREDENTIAL_PROVIDER_NAME in .ate-dev-env.sh.
 #
 # ---- type: locust -----------------------------------------------------------
 #

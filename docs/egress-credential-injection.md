@@ -127,17 +127,19 @@ policy promised denies the request rather than letting it out without it.
 
 ### Enable it
 
-**1. The gateway.** Injection is an install-time modifier on the egress
-gateway and requires the Envoy dataplane (the default):
+**1. The gateway.** The provider is selected when the egress gateway is
+deployed, with `--deploy-ate-system` or `--deploy-atenet`, and requires the
+Envoy dataplane (the default). The selection is required: an install that
+wants no injection says so with `off`.
 
 ```bash
-hack/install-ate.sh --deploy-atenet --experimental-egress-credential-injection
+hack/install-ate.sh --deploy-atenet --credential-provider-name=ate-secret://k8s.io
 ```
 
 | Flag | Purpose | Default |
 |---|---|---|
-| `--credential-provider-name` | Provider class the gateway serves, as an `ate-secret://` prefix; a policy URI of any other class fails closed | `ate-secret://k8s.io` |
-| `--credential-provider-address` | Where the gateway dials the provider | `k8s-credential-provider.ate-system.svc:50051` |
+| `--credential-provider-name` | `off`, or the provider class the gateway serves as an `ate-secret://` prefix; a policy URI of any other class fails closed. `ATE_CREDENTIAL_PROVIDER_NAME` when the flag is absent | required |
+| `--credential-provider-address` | Where the gateway dials the provider; required for any provider but `ate-secret://k8s.io` | `k8s-credential-provider.ate-system.svc:50051` for `ate-secret://k8s.io` |
 
 **2. The provider.** A separate component — the flag above only configures the
 gateway's client side. Until something serves the configured address, every
@@ -255,4 +257,4 @@ may only resolve Secrets in namespaces explicitly granted to it.
 * `cmd/credential-provider/kubernetes-secrets` — the reference provider.
 * `internal/e2e/suites/egresscredinject` — the e2e suite that proves the
   behavior table above. It runs only with `E2E_EGRESS_CREDINJECT=1`, against a
-  cluster installed with `--experimental-egress-credential-injection`.
+  cluster installed with `--credential-provider-name=ate-secret://k8s.io`.

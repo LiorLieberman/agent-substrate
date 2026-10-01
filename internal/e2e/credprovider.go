@@ -59,7 +59,7 @@ const (
 //
 // The egress gateway's side of the connection — the --credential-provider-*
 // flags on its ext_proc sidecar — is install-time configuration
-// (hack/install-ate.sh --experimental-egress-credential-injection), not
+// (hack/install-ate.sh --credential-provider-name=ate-secret://k8s.io), not
 // something this helper can retrofit.
 func DeployCredentialProvider(t *testing.T) {
 	t.Helper()

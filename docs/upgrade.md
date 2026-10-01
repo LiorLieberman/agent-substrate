@@ -517,8 +517,12 @@ ate-controller moved in step 2. From the same checkout, move
 
 ```bash
 go run ./cmd/ate-setup deploy apiserver
-go run ./cmd/ate-setup deploy ate-system
+go run ./cmd/ate-setup deploy ate-system --credential-provider-name=<as installed>
 ```
+
+`deploy ate-system` requires the credential provider selection; pass the one
+the install was made with (`off` if it never had one), or carry it in
+`ATE_CREDENTIAL_PROVIDER_NAME`.
 
 The second command rolls atenet and converges the rest of the
 install, postgres included: on a cordoned install it moves postgres to

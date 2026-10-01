@@ -51,7 +51,6 @@ func loadEnv(t *testing.T) {
 		"ATE_API_POSTGRES_SCHEMA",
 		"ATE_API_POSTGRES_SERVER_CA_FILE",
 		"ATE_ATENET_DATAPLANE",
-		"ATE_CREDENTIAL_INJECTION_ENABLED",
 		"ATE_CREDENTIAL_PROVIDER_ADDRESS",
 		"ATE_CREDENTIAL_PROVIDER_NAME",
 		"ATE_IMAGE_REPO",
@@ -547,13 +546,99 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{"cluster size", Options{ClusterSize: "size5"}},
 		{"extproc invalid format", Options{AdditionalEgressExtprocService: "extproc:50051"}},
 		{"extproc agentgateway", Options{Router: RouterAgentgateway, AdditionalEgressExtprocService: "ate-system/extproc:50051"}},
-		{"injection agentgateway", Options{Router: RouterAgentgateway, ExperimentalEgressCredentialInjection: true}},
+		{"provider agentgateway", Options{Router: RouterAgentgateway, CredentialProviderName: K8sCredentialProviderName}},
+		{"provider not a URI", Options{CredentialProviderName: "k8s.io"}},
+		{"provider wrong scheme", Options{CredentialProviderName: "https://k8s.io"}},
+		{"provider with a path", Options{CredentialProviderName: "ate-secret://k8s.io/default"}},
+		{"provider without a host", Options{CredentialProviderName: "ate-secret://"}},
+		{"other provider without an address", Options{CredentialProviderName: "ate-secret://vault.example.com"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := Load(tc.opts); err == nil {
 				t.Fatal("Load() succeeded, want an error")
 			}
 		})
+	}
+}
+
+// The provider selection is required only where the egress gateway is
+// rendered, so Load accepts an absent name and CredentialProvider refuses it.
+func TestCredentialProvider(t *testing.T) {
+	loadEnv(t)
+
+	for _, tc := range []struct {
+		name    string
+		opts    Options
+		env     map[string]string
+		want    CredentialProvider
+		wantErr bool
+	}{
+		{name: "absent is an error", opts: Options{}, wantErr: true},
+		{name: "off", opts: Options{CredentialProviderName: CredentialProviderOff}},
+		{name: "off ignores a lingering address", opts: Options{CredentialProviderName: CredentialProviderOff, CredentialProviderAddress: "stale.ate-system.svc:50051"}},
+		{name: "off on agentgateway", opts: Options{Router: RouterAgentgateway, CredentialProviderName: CredentialProviderOff}},
+		{
+			name: "kubernetes defaults its address",
+			opts: Options{CredentialProviderName: K8sCredentialProviderName},
+			want: CredentialProvider{Name: K8sCredentialProviderName, Address: K8sCredentialProviderAddress},
+		},
+		{
+			name: "kubernetes keeps a given address",
+			opts: Options{CredentialProviderName: K8sCredentialProviderName, CredentialProviderAddress: "secrets.ate-system.svc:443"},
+			want: CredentialProvider{Name: K8sCredentialProviderName, Address: "secrets.ate-system.svc:443"},
+		},
+		{
+			name: "another provider",
+			opts: Options{CredentialProviderName: "ate-secret://vault.example.com", CredentialProviderAddress: "vault.ate-system.svc:50051"},
+			want: CredentialProvider{Name: "ate-secret://vault.example.com", Address: "vault.ate-system.svc:50051"},
+		},
+		{
+			name: "the environment selects too",
+			env:  map[string]string{"ATE_CREDENTIAL_PROVIDER_NAME": K8sCredentialProviderName},
+			want: CredentialProvider{Name: K8sCredentialProviderName, Address: K8sCredentialProviderAddress},
+		},
+		{
+			name: "the flag overrides the environment",
+			opts: Options{CredentialProviderName: CredentialProviderOff},
+			env:  map[string]string{"ATE_CREDENTIAL_PROVIDER_NAME": K8sCredentialProviderName, "ATE_CREDENTIAL_PROVIDER_ADDRESS": "stale:1"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			cfg, err := Load(tc.opts)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			got, err := cfg.CredentialProvider()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("CredentialProvider() succeeded, want an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CredentialProvider() error = %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("CredentialProvider() = %+v, want %+v", got, tc.want)
+			}
+			if got.Enabled() != (tc.want.Name != "") {
+				t.Errorf("Enabled() = %v, want %v", got.Enabled(), tc.want.Name != "")
+			}
+		})
+	}
+}
+
+func TestCredentialProviderServerName(t *testing.T) {
+	for addr, want := range map[string]string{
+		"k8s-credential-provider.ate-system.svc:50051": "k8s-credential-provider.ate-system.svc",
+		"vault.example.com":                            "vault.example.com",
+	} {
+		if got := (CredentialProvider{Address: addr}).ServerName(); got != want {
+			t.Errorf("ServerName(%q) = %q, want %q", addr, got, want)
+		}
 	}
 }
 
