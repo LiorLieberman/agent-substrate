@@ -166,8 +166,7 @@ func outerChain(t *testing.T, tree node) node {
 // leg, and each manifest must have exactly the legs its topology implies.
 func TestEgressManifestsNameEveryExtProcChain(t *testing.T) {
 	want := map[string][]string{
-		egressManifests[0]: {extproc.EgressFilterChainName, extproc.EgressCleartextFilterChainName},
-		egressManifests[1]: {extproc.EgressFilterChainName, extproc.EgressTLSMITMFilterChainName, extproc.EgressCleartextFilterChainName},
+		egressManifests[0]: {extproc.EgressFilterChainName, extproc.EgressTLSMITMFilterChainName, extproc.EgressCleartextFilterChainName},
 	}
 	for _, path := range egressManifests {
 		t.Run(path, func(t *testing.T) {
@@ -339,11 +338,10 @@ func TestEgressManifestsConnectLegDecidesThePassthroughDestination(t *testing.T)
 
 // Every inner chain without an HCM is a passthrough chain: a plain tcp_proxy
 // to the ORIGINAL_DST cluster, dialing the filter state the CONNECT leg's
-// answer produced and nothing else. The plain gateway needs one per transport
-// protocol; sdsmint needs one, selected by the egress-policy module.
+// answer produced and nothing else. sdsmint needs one, selected by the
+// egress-policy module.
 var wantPassthroughChains = map[string][]string{
-	egressManifests[0]: {"egress_passthrough", "egress_tls_passthrough"},
-	egressManifests[1]: {"egress_passthrough"},
+	egressManifests[0]: {"egress_passthrough"},
 }
 
 func TestEgressManifestsPassthroughChainDialsOnlyTheDecidedAddress(t *testing.T) {
@@ -640,7 +638,7 @@ func mustJSON(t *testing.T, n node) string {
 }
 
 // sdsmintManifest is the gateway that runs the egress-policy module.
-var sdsmintManifest = egressManifests[1]
+var sdsmintManifest = egressManifests[0]
 
 // mitmListener returns the sdsmint manifest's inner listener.
 func mitmListener(t *testing.T, tree node) node {

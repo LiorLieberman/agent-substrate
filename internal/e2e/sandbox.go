@@ -103,19 +103,21 @@ func SubstrateCounterFixture() SubstrateFixture {
 	return f
 }
 
-// EgressFixture returns the egress demo for the sandbox class under test.
+// EgressFixture returns the egress demo for the sandbox class under test: the
+// MITM variant, whose actors trust the CA the egress gateway mints its leaves
+// from.
 func EgressFixture() Fixture {
 	if IsMicroVM() {
 		return Fixture{
-			Namespace:  "ate-demo-egress-microvm",
-			Name:       "egress-microvm",
-			DeployWith: "hack/install-ate-kind.sh --deploy-demo-egress-microvm",
+			Namespace:  "ate-demo-egress-microvm-mitm",
+			Name:       "egress-microvm-mitm",
+			DeployWith: "hack/install-ate-kind.sh --deploy-demo-egress-microvm-mitm",
 		}
 	}
 	return Fixture{
-		Namespace:  "ate-demo-egress",
-		Name:       "egress",
-		DeployWith: "hack/install-ate-kind.sh --deploy-demo-egress",
+		Namespace:  "ate-demo-egress-mitm",
+		Name:       "egress-mitm",
+		DeployWith: "hack/install-ate-kind.sh --deploy-demo-egress-mitm",
 	}
 }
 

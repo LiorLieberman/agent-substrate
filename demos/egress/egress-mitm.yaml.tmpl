@@ -15,8 +15,7 @@
 # Worker pool for the MITM variant of the egress demo: the same
 # workload as egress.yaml.tmpl, but its template (in
 # egress-mitm-template.yaml.tmpl) trusts only the egress gateway CA.
-# Kept as its own fixture rather than a flag on the egress demo: it REQUIRES
-# an sdsmint install (--experimental-use-sdsmint).
+# Kept as its own fixture rather than a flag on the egress demo.
 
 apiVersion: v1
 kind: Namespace

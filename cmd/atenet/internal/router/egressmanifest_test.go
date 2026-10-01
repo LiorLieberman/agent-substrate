@@ -23,11 +23,9 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// egressManifests are the two variants ate-setup installs; the plain one is the
-// default path, the sdsmint one terminates and re-originates the tunneled TLS.
-// They are siblings, and the timeout below was set on one and not the other.
+// egressManifests are the envoy egress gateways ate-setup installs: the sdsmint
+// one, which terminates and re-originates the tunneled TLS.
 var egressManifests = []string{
-	"../../../../manifests/ate-install/atenet-egress.yaml",
 	"../../../../manifests/ate-install/atenet-egress-with-sdsmint.yaml",
 }
 

@@ -32,7 +32,7 @@ const (
 
 // Filter chains of the egress gateway that call ext_proc; each is a leg of the
 // egress handler. Must match the chain names in
-// manifests/ate-install/atenet-egress.yaml and atenet-egress-with-sdsmint.yaml.
+// manifests/ate-install/atenet-egress-with-sdsmint.yaml.
 const (
 	// EgressFilterChainName terminates the actor's outer mTLS CONNECT: the
 	// certificate is authenticated and the address rules decided here.

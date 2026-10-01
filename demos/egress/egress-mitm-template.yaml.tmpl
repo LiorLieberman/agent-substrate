@@ -14,9 +14,8 @@
 
 # MITM variant of the egress demo template: the same workload as
 # egress-template.yaml.tmpl, but also trusting the egress gateway
-# CA. The networking suite builds its egress actors from this fixture instead
-# of the plain one when E2E_EGRESS_MITM is set, because under an sdsmint
-# gateway TestActorEgressHTTPS's origin certificate is a per-SNI leaf the
+# CA. The networking suite builds its egress actors from this fixture, because
+# TestActorEgressHTTPS's origin certificate is a per-SNI leaf the egress
 # gateway minted, which chains to no public CA.
 #
 # Kept in step with egress-template.yaml.tmpl; the deltas are the

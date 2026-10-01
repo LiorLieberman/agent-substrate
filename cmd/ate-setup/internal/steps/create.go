@@ -23,7 +23,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/agent-substrate/substrate/cmd/ate-setup/internal/config"
 	"github.com/agent-substrate/substrate/cmd/ate-setup/internal/log"
 	"github.com/agent-substrate/substrate/internal/localca"
 	"github.com/agent-substrate/substrate/internal/localjwtauthority"
@@ -83,13 +82,10 @@ func (e *Env) CreateEgressMITMCAPoolSecret(ctx context.Context) error {
 	return e.createPoolSecret(ctx, e.Namespace(), SecretEgressMITMCAPool, corev1.SecretTypeTLS, data)
 }
 
-// EnsureEgressMITMCAPoolSecret creates the egress MITM CA pool secret for the
-// gateways that mint from it: the agentgateway egress always, the envoy egress
-// under --experimental-use-sdsmint. Both mount the same Secret.
+// EnsureEgressMITMCAPoolSecret creates the egress MITM CA pool secret. Both
+// dataplanes need it: the agentgateway-egress-mitm overlay mounts the same
+// Secret the envoy egress does.
 func (e *Env) EnsureEgressMITMCAPoolSecret(ctx context.Context) error {
-	if !e.Cfg.ExperimentalUseSDSMint && e.Cfg.Router != config.RouterAgentgateway {
-		return nil
-	}
 	return e.ensureSecret(ctx, e.Namespace(), SecretEgressMITMCAPool, e.CreateEgressMITMCAPoolSecret)
 }
 
