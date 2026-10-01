@@ -218,6 +218,8 @@ jobs:
         hack/install-ate-kind.sh --deploy-demo-egress-microvm
     - name: Run E2E tests (gVisor)
       env:
+        # This is the test-side switch. The injection suite skips without it, while
+        # ATE_CREDENTIAL_INJECTION_ENABLED above configures the gateway.
         # Injection happens entirely inside the gateway, so the sandbox class
         # does not change the path; the gVisor lane alone runs its suite.
         E2E_EGRESS_CREDINJECT: ${{ matrix.dataplane == 'envoy' && '1' || '' }}
