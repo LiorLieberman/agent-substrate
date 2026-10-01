@@ -141,6 +141,15 @@ func TestActorEgressMITMTrust(t *testing.T) {
 		t.Fatalf("passthrough fetch %s: status %s, want 200", passthroughOrigin, pt.Status)
 	}
 
+	// The gateway dials the name the SNI claims.
+	bySNI := probeFetch(t, ctx, rc, id, passthroughOrigin, "system", "dial="+url.QueryEscape(unreachableAddress))
+	switch {
+	case bySNI.Error != "":
+		t.Errorf("TLS passthrough to %s dialed at %s failed: %s — the gateway dialed the actor's address instead of resolving the SNI", passthroughOrigin, unreachableAddress, bySNI.Error)
+	case bySNI.Status != "200":
+		t.Errorf("passthrough fetch %s dialed at %s: status %s, want 200", passthroughOrigin, unreachableAddress, bySNI.Status)
+	}
+
 	// The rule for this name covers 8443 only, so the ClientHello on 443 is
 	// closed.
 	const wrongPortOrigin = "https://" + egressOriginPassthroughWrongPortHost + "/"
@@ -175,6 +184,9 @@ const (
 	// egressOriginPassthroughWrongPortHost is allowed by passthrough on 8443
 	// only, while the probe dials 443.
 	egressOriginPassthroughWrongPortHost = "example.net"
+	// unreachableAddress is in the reserved 240/4 block: a gateway that dialed
+	// it instead of the resolved SNI would reach nothing.
+	unreachableAddress = "240.0.0.1:443"
 )
 
 type fetchResponse struct {
@@ -182,13 +194,17 @@ type fetchResponse struct {
 	Error  string `json:"error"`
 }
 
-// probeFetch asks the probe to fetch origin with the given roots mode.
+// probeFetch asks the probe to fetch origin with the given roots mode;
+// extraParams are further query parameters, already encoded.
 // Router-level failures are retried for up to 30s (a resume can return
 // before the route reaches the router's xDS snapshot); probe-level TLS
 // failures are results, returned for the caller to assert on.
-func probeFetch(t *testing.T, ctx context.Context, rc *e2e.RouterClient, id, origin, roots string) fetchResponse {
+func probeFetch(t *testing.T, ctx context.Context, rc *e2e.RouterClient, id, origin, roots string, extraParams ...string) fetchResponse {
 	t.Helper()
 	path := "/fetch?roots=" + roots + "&url=" + url.QueryEscape(origin)
+	for _, p := range extraParams {
+		path += "&" + p
+	}
 	ref := resources.ActorRef{Atespace: probeNamespace, Name: id}
 
 	deadline := time.Now().Add(30 * time.Second)
