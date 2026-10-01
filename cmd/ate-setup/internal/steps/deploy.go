@@ -69,7 +69,8 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 	if _, _, err := e.SubstrateVersion(); err != nil {
 		return err
 	}
-	if _, err := e.Cfg.CredentialProvider(); err != nil {
+	provider, err := e.Cfg.CredentialProvider()
+	if err != nil {
 		return err
 	}
 	// Likewise the CSI request, even though it is only acted on partway
@@ -157,6 +158,11 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 	if err := e.EnsureEgressMITMCAPoolSecret(ctx); err != nil {
 		return err
 	}
+	// After the podcertificate controller: the provider serves with a
+	// projected pod certificate.
+	if err := e.reconcileK8sCredentialProvider(ctx, provider); err != nil {
+		return err
+	}
 	if err := e.applyAtenetEgress(ctx); err != nil {
 		return err
 	}
@@ -178,6 +184,9 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 		rollout{kube.KindDeployment, "atenet-egress"},
 		rollout{kube.KindDaemonSet, ateletName},
 	)
+	if provider.Kubernetes() {
+		waits = append(waits, rollout{kube.KindDeployment, k8sCredentialProviderDeployment})
+	}
 	for _, w := range waits {
 		if err := e.Kube.RolloutStatus(ctx, w.kind, e.Namespace(), w.name, e.Cfg.RolloutTimeout); err != nil {
 			return err
@@ -370,7 +379,8 @@ func (e *Env) DeployAtenet(ctx context.Context) error {
 	log.Step("deploy_atenet")
 
 	// Before anything is applied: the egress render needs the answer.
-	if _, err := e.Cfg.CredentialProvider(); err != nil {
+	provider, err := e.Cfg.CredentialProvider()
+	if err != nil {
 		return err
 	}
 	if err := e.EnsureCRDs(ctx); err != nil {
@@ -396,11 +406,18 @@ func (e *Env) DeployAtenet(ctx context.Context) error {
 	if err := e.EnsureEgressMITMCAPoolSecret(ctx); err != nil {
 		return err
 	}
+	if err := e.reconcileK8sCredentialProvider(ctx, provider); err != nil {
+		return err
+	}
 	if err := e.applyAtenetEgress(ctx); err != nil {
 		return err
 	}
 
-	for _, name := range []string{"atenet-router", "atenet-egress"} {
+	deployments := []string{"atenet-router", "atenet-egress"}
+	if provider.Kubernetes() {
+		deployments = append(deployments, k8sCredentialProviderDeployment)
+	}
+	for _, name := range deployments {
 		if err := e.Kube.RolloutStatus(ctx, kube.KindDeployment, e.Namespace(), name, e.Cfg.RolloutTimeout); err != nil {
 			return err
 		}

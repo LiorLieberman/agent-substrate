@@ -87,8 +87,9 @@ var withPlaceholder = []string{"header=" + url.QueryEscape("Authorization:"+plac
 // A request without the header is not covered: the API forwards it without
 // the credential, which the gateway does not implement yet.
 //
-// The gate: this needs the egress gateway deployed with injection enabled
-// plus the k8s-credential-provider, which the suite deploys itself. Locally:
+// The gate: this needs the install made with the bundled provider, which
+// deploys the k8s-credential-provider and points the egress gateway at it.
+// Locally:
 //
 //	hack/install-ate-kind.sh --deploy-atenet --credential-provider-name=ate-secret://k8s.io
 //	E2E_EGRESS_CREDINJECT=1 hack/run-e2e-kind.sh ./internal/e2e/suites/egresscredinject -v -args --no-color
@@ -103,7 +104,7 @@ func TestActorEgressCredentialInjection(t *testing.T) {
 	ctx := context.Background()
 	clients := e2e.GetClients()
 
-	e2e.DeployCredentialProvider(t)
+	e2e.ConfigureCredentialProvider(t)
 
 	probeNamespace, _ = e2e.DeployProbe(t, env["BUCKET_NAME"], "egresscredinject", e2e.WithTrustBundle())
 

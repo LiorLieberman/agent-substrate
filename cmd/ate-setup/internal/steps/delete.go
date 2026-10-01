@@ -26,10 +26,12 @@ import (
 
 // DeleteAteSystem removes the control plane.
 //
-// PostgreSQL, the agentgateway ConfigMap, and the CRDs are deleted explicitly
-// afterwards because they are not part of every rendered bundle: which of them
-// the install created depends on the router that was selected, and teardown
-// must not depend on remembering that.
+// PostgreSQL, the agentgateway ConfigMap, the bundled credential provider, and
+// the CRDs are deleted explicitly afterwards because they are not part of
+// every rendered bundle: which of them the install created depends on the
+// router and credential provider that were selected, and teardown must not
+// depend on remembering that. The provider's ClusterRole and binding would
+// otherwise outlive the namespace.
 func (e *Env) DeleteAteSystem(ctx context.Context) error {
 	log.Step("delete_ate_system")
 
@@ -65,13 +67,18 @@ func (e *Env) DeleteAteSystem(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := e.Kube.DeletePath(ctx, e.k8sCredentialProviderPath(k8sCredentialProviderManifest)); err != nil {
+		return err
+	}
 	if err := e.Kube.WaitDeleted(ctx, schema.GroupVersionKind{Version: "v1", Kind: "Namespace"}, "", e.Namespace(), e.Cfg.WaitTimeout(BootstrapTimeout)); err != nil {
 		return err
 	}
 	return e.UnlabelNodesSubstrateVersion(ctx)
 }
 
-// DeleteAtenet removes the atenet dataplane.
+// DeleteAtenet removes the atenet dataplane, and with it the bundled
+// credential provider deploy atenet may have installed. The provider's policy
+// ConfigMap stays: it is the operator's allow-list, not the install's.
 func (e *Env) DeleteAtenet(ctx context.Context) error {
 	log.Step("delete_atenet")
 
@@ -84,7 +91,7 @@ func (e *Env) DeleteAtenet(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	return e.Kube.DeletePath(ctx, e.k8sCredentialProviderPath(k8sCredentialProviderManifest))
 }
 
 // Deleter is the demo teardown DeleteAll drives.

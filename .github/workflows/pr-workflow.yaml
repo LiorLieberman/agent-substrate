@@ -150,7 +150,8 @@ jobs:
           ) }}
     env:
       E2E_ATENET_DATAPLANE: ${{ matrix.dataplane }}
-      # The installer requires a credential provider selection. Envoy only:
+      # The installer requires a credential provider selection, and deploys the
+      # bundled Kubernetes Secrets provider with the control plane. Envoy only:
       # it has no agentgateway credential-provider configuration yet. Job-wide
       # because every ate-setup invocation reads it, including the control
       # plane redeploy in run-microvm-demo-kind.sh.

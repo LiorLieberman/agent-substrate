@@ -141,28 +141,30 @@ hack/install-ate.sh --deploy-atenet --credential-provider-name=ate-secret://k8s.
 | `--credential-provider-name` | `off`, or the provider class the gateway serves as an `ate-secret://` prefix; a policy URI of any other class fails closed. `ATE_CREDENTIAL_PROVIDER_NAME` when the flag is absent | required |
 | `--credential-provider-address` | Where the gateway dials the provider; required for any provider but `ate-secret://k8s.io` | `k8s-credential-provider.ate-system.svc:50051` for `ate-secret://k8s.io` |
 
-**2. The provider.** A separate component — the flag above only configures the
-gateway's client side. Until something serves the configured address, every
-matching injection rule fails closed with 503. For the Kubernetes Secrets
-provider, deploy the manifests under `manifests/egress-credential-injection/`:
+**2. The provider.** With `ate-secret://k8s.io` the install deploys the
+Kubernetes Secrets provider itself, from
+`manifests/egress-credential-injection/`, and waits for it alongside the
+gateway. Selecting any other provider, or `off`, removes a bundled provider an
+earlier install left behind; a provider of your own is yours to deploy, and
+until something serves the configured address every matching injection rule
+fails closed with 503.
 
-```bash
-# The atespace→namespace authorization policy (edit for your atespaces first;
-# default-deny, so an atespace absent from it resolves nothing):
-kubectl apply -f manifests/egress-credential-injection/namespace-policy.yaml
-
-# A sample secret matching the sample policy:
-kubectl apply -f manifests/egress-credential-injection/sample-secret.yaml
-
-# The provider itself (ko builds its image):
-hack/run-tool.sh ko apply -f manifests/egress-credential-injection/k8s-credential-provider.yaml
-```
-
-The provider loads the namespace policy **once at startup** and does not yet
-reload it. After editing the ConfigMap, restart the provider:
+The provider enforces an atespace→namespace authorization policy, the
+`k8s-credential-provider-namespace-policy` ConfigMap in `ate-system`. The
+install creates it from `namespace-policy.yaml` only when it is absent, so edit
+the one in the cluster for your atespaces; a redeploy leaves it alone. It is
+default-deny: an atespace absent from it resolves nothing. The provider loads
+it **once at startup** and does not yet reload it, so after editing, restart
+the provider:
 
 ```bash
 kubectl -n ate-system rollout restart deployment/k8s-credential-provider
+```
+
+A sample secret matching the shipped sample policy, for a first smoke test:
+
+```bash
+kubectl apply -f manifests/egress-credential-injection/sample-secret.yaml
 ```
 
 **3. The actors.** Actors can now add `replaceHeaders` effects to their

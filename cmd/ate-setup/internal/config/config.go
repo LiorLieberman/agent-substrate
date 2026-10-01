@@ -469,12 +469,13 @@ func validate(cfg *Config) error {
 }
 
 // CredentialProviderOff is the --credential-provider-name value that leaves
-// egress credential injection off: the gateway gets no provider flags.
+// egress credential injection off: the gateway gets no provider flags and no
+// provider is deployed.
 const CredentialProviderOff = "off"
 
 // The bundled Kubernetes Secrets credential provider, the one
 // --credential-provider-name selects by its ate-secret:// prefix and the only
-// one whose address the installer knows: the Service in
+// one the installer deploys itself. Its address is the Service in
 // manifests/egress-credential-injection/k8s-credential-provider.yaml.
 const (
 	K8sCredentialProviderName    = "ate-secret://k8s.io"
@@ -499,7 +500,7 @@ type CredentialProvider struct {
 func (p CredentialProvider) Enabled() bool { return p.Name != "" }
 
 // Kubernetes reports whether the provider is the bundled Kubernetes Secrets
-// one.
+// one, which the installer deploys alongside the gateway.
 func (p CredentialProvider) Kubernetes() bool { return p.Name == K8sCredentialProviderName }
 
 // ServerName is the SAN the gateway expects on the provider's serving

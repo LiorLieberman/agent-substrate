@@ -39,29 +39,30 @@ const (
 )
 
 // The fixture manifest (Secret plus provider authorization policy) and the
-// provider's real deployment manifest — reused rather than copied, so the
-// suite cannot drift from what an install deploys.
+// policy the install ships, which the fixture replaces for the duration of
+// the test.
 const (
-	credinjectFixtureManifest  = "internal/e2e/fixtures/credinject/credinject.yaml"
-	credentialProviderManifest = "manifests/egress-credential-injection/k8s-credential-provider.yaml"
+	credinjectFixtureManifest        = "internal/e2e/fixtures/credinject/credinject.yaml"
+	credentialProviderPolicyManifest = "manifests/egress-credential-injection/namespace-policy.yaml"
 )
 
-// DeployCredentialProvider installs the k8s-credential-provider and the
-// credinject fixture (the Secret behind CredentialInjectionURI and the
-// authorization policy that lets the probe atespaces resolve it), and removes
-// both when the test passes. The provider Deployment is restarted after the
-// policy ConfigMap is applied because it reads the policy once at startup, so
-// a provider left running by an earlier install would otherwise keep
-// enforcing a stale one.
+// ConfigureCredentialProvider points the install's k8s-credential-provider at
+// the credinject fixture: the Secret behind CredentialInjectionURI and the
+// authorization policy that lets the probe atespaces resolve it. The provider
+// Deployment is restarted after the policy ConfigMap is applied because it
+// reads the policy once at startup. When the test passes the fixture is
+// removed and the shipped policy put back, so the provider still has a
+// ConfigMap to mount the next time it restarts.
 //
-// A failed test keeps both so the provider's logs can be inspected; the next
-// run re-applies them.
+// A failed test keeps the fixture so the provider's logs can be read against
+// it; the next run re-applies it.
 //
-// The egress gateway's side of the connection — the --credential-provider-*
-// flags on its ext_proc sidecar — is install-time configuration
+// The provider itself and the gateway's side of the connection — the
+// --credential-provider-* flags on its ext_proc sidecar — are the install's
 // (hack/install-ate.sh --credential-provider-name=ate-secret://k8s.io), not
-// something this helper can retrofit.
-func DeployCredentialProvider(t *testing.T) {
+// something this helper can retrofit: the rollout wait below fails on a
+// cluster installed without them.
+func ConfigureCredentialProvider(t *testing.T) {
 	t.Helper()
 	root, err := FindRepoRoot()
 	if err != nil {
@@ -75,27 +76,17 @@ func DeployCredentialProvider(t *testing.T) {
 		RunCmd(t, "kubectl", args...)
 	}
 
-	// The policy ConfigMap must exist before the provider pod starts: the
-	// Deployment mounts it, and the provider loads it at startup.
 	fixture := filepath.Join(root, credinjectFixtureManifest)
 	kubectl("apply", "-f", fixture)
-	deleteOnPass := func(manifest string) {
-		t.Cleanup(func() {
-			if t.Failed() {
-				return
-			}
-			kubectl("delete", "--ignore-not-found", "-f", manifest)
-		})
-	}
-	deleteOnPass(fixture)
+	t.Cleanup(func() {
+		if t.Failed() {
+			return
+		}
+		kubectl("delete", "--ignore-not-found", "-f", fixture)
+		kubectl("apply", "-f", filepath.Join(root, credentialProviderPolicyManifest))
+	})
 
-	provider := filepath.Join(root, credentialProviderManifest)
-	koApply(t, provider)
-	deleteOnPass(provider)
-
-	// Restart unconditionally: if the Deployment already existed, koApply may
-	// have changed nothing, leaving a pod that started under a previous
-	// policy ConfigMap. The provider manifest pins the canonical namespace.
+	// The manifests pin the canonical namespace.
 	ns := installdefaults.SystemNamespace
 	kubectl("-n", ns, "rollout", "restart", "deployment/k8s-credential-provider")
 	kubectl("-n", ns, "rollout", "status", "deployment/k8s-credential-provider", "--timeout=3m")

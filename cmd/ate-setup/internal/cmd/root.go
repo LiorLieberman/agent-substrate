@@ -106,7 +106,7 @@ func init() {
 	f.StringVar(&opts.AdditionalEgressExtprocService, "experimental-additional-egress-extproc-service", "", "Run an additional ext_proc authorization filter served by NS/SVC:PORT (requires --atenet-dataplane=envoy)")
 	f.StringVar(&opts.CredentialProviderName, "credential-provider-name", "",
 		"Credential provider the egress gateway injects credentials from; required by deploy ate-system and deploy atenet. "+
-			config.CredentialProviderOff+" leaves injection off, "+config.K8sCredentialProviderName+" is the bundled Kubernetes Secrets provider, "+
+			config.CredentialProviderOff+" leaves injection off, "+config.K8sCredentialProviderName+" deploys and uses the bundled Kubernetes Secrets provider, "+
 			"any other ate-secret:// prefix names a provider you deploy yourself (requires --atenet-dataplane=envoy; defaults to ATE_CREDENTIAL_PROVIDER_NAME)")
 	f.StringVar(&opts.CredentialProviderAddress, "credential-provider-address", "",
 		"host:port the egress gateway dials the credential provider at; required for any provider but the bundled one (default "+config.K8sCredentialProviderAddress+")")

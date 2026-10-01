@@ -50,9 +50,9 @@ export KO_DOCKER_REPO="gcr.io/${PROJECT_ID}/ate-images"
 
 # Credential provider the egress gateway injects credentials from; the install
 # requires a choice. "off" leaves egress credential injection off,
-# "ate-secret://k8s.io" is the bundled Kubernetes Secrets provider, any other
-# ate-secret:// prefix names a provider of your own (then also set
-# ATE_CREDENTIAL_PROVIDER_ADDRESS). See
+# "ate-secret://k8s.io" deploys and uses the bundled Kubernetes Secrets
+# provider, any other ate-secret:// prefix names a provider you deploy yourself
+# (then also set ATE_CREDENTIAL_PROVIDER_ADDRESS). See
 # docs/egress-credential-injection.md.
 export ATE_CREDENTIAL_PROVIDER_NAME=off
 

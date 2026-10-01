@@ -156,8 +156,8 @@ prints the installed version, off the atelet DaemonSet the install created.
    ```
 
    `--credential-provider-name` is required: `off` leaves egress credential
-   injection out, `ate-secret://k8s.io` selects the bundled Kubernetes Secrets
-   provider (see [docs/egress-credential-injection.md](docs/egress-credential-injection.md)).
+   injection out, `ate-secret://k8s.io` also deploys the bundled Kubernetes
+   Secrets provider (see [docs/egress-credential-injection.md](docs/egress-credential-injection.md)).
    `ATE_CREDENTIAL_PROVIDER_NAME` in `.ate-dev-env.sh` is the same choice.
 
    Nodes that GKE adds later (autoscaling, auto-repair, node upgrades) are
