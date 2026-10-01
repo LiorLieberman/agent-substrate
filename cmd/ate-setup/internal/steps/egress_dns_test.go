@@ -34,9 +34,8 @@ import (
 )
 
 // TestEgressDNSLookupFamily requires ALL on every dynamic forward proxy DNS
-// cache in the install tree, so a new egress variant is checked the day it is
-// added rather than the day it is installed. atenet-egress.yaml
-// says why ALL.
+// cache in the install tree, so a new egress manifest is checked the day it is
+// added rather than the day it is installed. atenet-egress.yaml says why ALL.
 func TestEgressDNSLookupFamily(t *testing.T) {
 	for _, path := range manifestPaths(t) {
 		caches := dnsCacheConfigs(t, path)
