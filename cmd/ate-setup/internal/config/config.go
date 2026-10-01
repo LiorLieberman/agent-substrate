@@ -170,7 +170,8 @@ type Config struct {
 	// ate.dev/workloadType=ate-postgres:NoSchedule for postgres alone.
 	CordonControlPlane bool
 
-	// ExperimentalUseSDSMint enables per-SNI dynamic cert minting on atenet-egress.
+	// ExperimentalUseSDSMint enables per-SNI dynamic cert minting on the envoy
+	// atenet-egress; the agentgateway egress always mints.
 	ExperimentalUseSDSMint bool
 
 	// AdditionalEgressExtprocService is the optional NS/SVC:PORT external processor filter.

@@ -423,13 +423,8 @@ func TestRenderCordonControlPlane(t *testing.T) {
 			want: []string{"atenet-egress"},
 		},
 		{
-			name: "agentgateway egress overlay",
-			path: func(e *Env) string { return e.Cfg.Path(installDir + "/agentgateway-egress") },
-			want: []string{"atenet-egress"},
-		},
-		{
 			name: "agentgateway egress mitm overlay",
-			cfg:  config.Config{Router: config.RouterAgentgateway, ExperimentalUseSDSMint: true},
+			cfg:  config.Config{Router: config.RouterAgentgateway},
 			path: func(e *Env) string { return e.Cfg.Path(installDir + "/agentgateway-egress-mitm") },
 			want: []string{"atenet-egress"},
 		},
@@ -513,14 +508,13 @@ func TestRenderWithoutCordonLeavesManifestsAlone(t *testing.T) {
 	}
 }
 
-// The two sdsmint switches are coupled: the MITM overlay mounts the CA pool
-// Secret EnsureEgressMITMCAPoolSecret generates, so selecting one without the
-// other leaves atenet-egress waiting on a Secret nobody creates.
+// The agentgateway overlay mounts the CA pool Secret EnsureEgressMITMCAPoolSecret
+// generates, and is selected without --experimental-use-sdsmint; the pool must
+// follow, or atenet-egress waits on a Secret nobody creates.
 func TestAgentgatewayEgressMITMOverlay(t *testing.T) {
 	cfg := &config.Config{
-		Root:                   repoRoot(t),
-		Router:                 config.RouterAgentgateway,
-		ExperimentalUseSDSMint: true,
+		Root:   repoRoot(t),
+		Router: config.RouterAgentgateway,
 	}
 	e := &Env{Cfg: cfg, Kube: fakeKube(t)}
 

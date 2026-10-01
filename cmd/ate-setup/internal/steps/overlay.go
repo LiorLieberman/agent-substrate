@@ -149,10 +149,7 @@ func (e *Env) renderAtenetEgressManifest(ctx context.Context) ([]byte, error) {
 		if injection {
 			return nil, fmt.Errorf("--experimental-egress-credential-injection requires --atenet-dataplane=envoy")
 		}
-		if e.Cfg.ExperimentalUseSDSMint {
-			return e.renderResolve(ctx, e.Cfg.Path(installDir+"/agentgateway-egress-mitm"))
-		}
-		return e.renderResolve(ctx, e.Cfg.Path(installDir+"/agentgateway-egress"))
+		return e.renderResolve(ctx, e.Cfg.Path(installDir+"/agentgateway-egress-mitm"))
 	}
 
 	imageReference, err := e.dockerfileImage(ctx, envoyDataplaneImage, envoyDataplaneDockefile)

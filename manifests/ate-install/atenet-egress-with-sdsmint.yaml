@@ -1407,6 +1407,7 @@ metadata:
   namespace: ate-system
 spec:
   type: ClusterIP
+  ipFamilyPolicy: PreferDualStack
   selector:
     app: atenet-egress
   ports:

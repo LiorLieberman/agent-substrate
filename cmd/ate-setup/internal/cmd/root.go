@@ -103,7 +103,7 @@ func init() {
 		"Keep the control plane off the worker nodes. Assumes a small shared pool labeled and tainted "+
 			"ate.dev/workloadType=ate-control-plane:NoSchedule, and a one-node pool labeled and tainted "+
 			"ate.dev/workloadType=ate-postgres:NoSchedule for postgres alone")
-	f.BoolVar(&opts.ExperimentalUseSDSMint, "experimental-use-sdsmint", false, "Deploy egress gateway with dynamic per-SNI certificate minting")
+	f.BoolVar(&opts.ExperimentalUseSDSMint, "experimental-use-sdsmint", false, "Deploy the envoy egress gateway with dynamic per-SNI certificate minting (the agentgateway egress always mints)")
 	f.StringVar(&opts.AdditionalEgressExtprocService, "experimental-additional-egress-extproc-service", "", "Run an additional ext_proc authorization filter served by NS/SVC:PORT (requires --experimental-use-sdsmint)")
 	f.BoolVar(&opts.ExperimentalEgressCredentialInjection, "experimental-egress-credential-injection", false, "Point the egress gateway's MITM-leg handler at a credential provider so a matching EgressPolicy rule injects its credential (requires --experimental-use-sdsmint and --atenet-dataplane=envoy)")
 	f.StringVar(&opts.CredentialProviderName, "credential-provider-name", "", "Credential provider the injector serves, as a ate-secret:// prefix (default ate-secret://k8s.io)")

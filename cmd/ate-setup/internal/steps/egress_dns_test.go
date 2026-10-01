@@ -94,7 +94,7 @@ func TestOverlayDiscoveryCoversTheInstaller(t *testing.T) {
 	discovered := overlayDirs(t)
 
 	want := []string{
-		filepath.Join(root, installDir, "agentgateway-egress"),
+		filepath.Join(root, installDir, "agentgateway-egress-mitm"),
 		filepath.Join(root, installDir, "agentgateway-router"),
 	}
 	for _, kind := range []bool{false, true} {
