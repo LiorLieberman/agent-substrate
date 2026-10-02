@@ -107,6 +107,12 @@ kubectl ate create actor my-counter-1 -a ate-demo-counter --template counter
 kubectl port-forward -n ate-system svc/atenet-router 8000:80
 ```
 
+> [!IMPORTANT]
+> `{"name":"k8s.io"}` deploys the bundled credential provider with an empty,
+> default-deny namespace policy. Before an actor can have a credential
+> injected, grant its atespace the namespaces whose Secrets it may read; see
+> [Enable it](docs/egress-credential-injection.md#enable-it).
+
 3. In a **separate terminal**, send an HTTP request to increment the counter:
 ```shell
 curl -X POST \
@@ -160,6 +166,11 @@ prints the installed version, off the atelet DaemonSet the install created.
    the egress gateway; `{"enabled":false}` turns egress credential injection off
    (see [docs/egress-credential-injection.md](docs/egress-credential-injection.md)).
    `ATE_CREDENTIAL_PROVIDER` in `.ate-dev-env.sh` is the same choice.
+
+   **Credential injection needs a namespace policy.** The bundled provider
+   starts with an empty, default-deny one, so it resolves no Secrets until you
+   grant each atespace the namespaces it may read; see
+   [Enable it](docs/egress-credential-injection.md#enable-it).
 
    Nodes that GKE adds later (autoscaling, auto-repair, node upgrades) are
    born with the node pool's labels, so the pool needs

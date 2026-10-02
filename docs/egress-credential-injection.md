@@ -176,18 +176,31 @@ your own is yours to deploy, and until something serves the configured address
 every matching injection rule fails closed with 503.
 
 The provider enforces an atespace→namespace authorization policy, the
-`k8s-credential-provider-namespace-policy` ConfigMap in `ate-system`. The
-install creates it from `namespace-policy.yaml` only when it is absent, so edit
-the one in the cluster for your atespaces; a redeploy leaves it alone. It is
-default-deny: an atespace absent from it resolves nothing. The provider loads
-it **once at startup** and does not yet reload it, so after editing, restart
-the provider:
+`k8s-credential-provider-namespace-policy` ConfigMap in `ate-system`. The install creates
+it empty, granting nothing, and only when it is absent, so a redeploy keeps
+edits. Grant each atespace the namespaces whose Secrets it may resolve:
+
+```bash
+kubectl -n ate-system edit configmap k8s-credential-provider-namespace-policy
+```
+
+```yaml
+  namespace-policy.yaml: |
+    policies:
+    - atespace: team-a
+      allowedNamespaces:
+      - ns1
+```
+
+The provider loads the policy **once at startup** and does not yet reload it,
+so after editing, restart the provider:
 
 ```bash
 kubectl -n ate-system rollout restart deployment/k8s-credential-provider
 ```
 
-A sample secret matching the shipped sample policy, for a first smoke test:
+For a first smoke test, grant your actor's atespace `ns1` as above and apply a
+sample secret that the URI in the sample policy resolves to:
 
 ```bash
 kubectl apply -f manifests/egress-credential-injection/sample-secret.yaml
