@@ -118,9 +118,10 @@ create, update or delete is visible to new requests within one TTL, and a
 deleted policy becomes a deny. Every policy denial answers a fixed
 `egress denied` body; the reason is in the sidecar's log.
 
-Credential injection (`replace_headers`) is not implemented yet: a
-matched rule that declares one is denied with 501 rather than forwarded
-without the credential the policy promised.
+Credential injection (`replace_headers`) runs on the MITM leg: a header the
+request carries is replaced with the credential from the provider, and a
+request without it is forwarded unchanged. See
+`docs/egress-credential-injection.md`.
 
 ## adding a dataplane attribute
 

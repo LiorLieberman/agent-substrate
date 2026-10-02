@@ -17,6 +17,7 @@ package egress
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	envoy_type "github.com/envoyproxy/go-control-plane/envoy/type/v3"
@@ -49,18 +50,25 @@ func mapCredentialProviderError(err error) error {
 }
 
 // applyEffects resolves a matched rule's credential injections and returns the
-// header mutations to add to the request, or an error that denies it. A rule
-// with no injections adds nothing.
+// header mutations to add to the request, or an error that denies it. Only a
+// header the request carries is replaced (headers is keyed by lowercased
+// name); a request without it goes out unchanged, and its credential is not
+// fetched.
 //
 // A credential is only ever injected on the TLS-terminated MITM leg. On a
 // cleartext leg injection is skipped and the request goes out without the
-// credential. On the MITM leg any failure to produce the credential the policy
-// requires denies the request, including having no provider configured.
+// credential. On the MITM leg any failure to produce a credential the request
+// needs denies it, including having no provider configured.
 //
-// This gateway cannot mint actor JWTs yet, so on the MITM leg a rule that asks
-// for one is denied.
-func (h *Handler) applyEffects(ctx context.Context, ref resources.ActorRef, dest egresspolicy.Destination, leg string, effects *ateapipb.HttpRuleEffects) ([]*corev3.HeaderValueOption, error) {
-	injections := effects.GetReplaceHeaders()
+// This gateway cannot mint actor JWTs yet, so on the MITM leg a request that
+// needs one is denied.
+func (h *Handler) applyEffects(ctx context.Context, ref resources.ActorRef, dest egresspolicy.Destination, leg string, headers map[string]string, effects *ateapipb.HttpRuleEffects) ([]*corev3.HeaderValueOption, error) {
+	var injections []*ateapipb.CredentialHeader
+	for _, inj := range effects.GetReplaceHeaders() {
+		if _, ok := headers[strings.ToLower(inj.GetHeader())]; ok {
+			injections = append(injections, inj)
+		}
+	}
 	if len(injections) == 0 {
 		return nil, nil
 	}

@@ -74,6 +74,9 @@ var withPlaceholder = []string{"header=" + url.QueryEscape("Authorization:"+plac
 //     received — the on-the-wire proof, not an inference from a status code —
 //     and not the placeholder, so an actor cannot choose the value that
 //     leaves.
+//   - no header: the same fetch without the placeholder echoes no
+//     Authorization at all — the gateway replaces only a header the request
+//     carries, and does not add one.
 //   - cleartext skip: the same fetch over plain HTTP, allowed by an http rule
 //     with the same effect, echoes the placeholder and not the credential —
 //     the secret never rides a cleartext wire, and the request is passed
@@ -83,9 +86,6 @@ var withPlaceholder = []string{"header=" + url.QueryEscape("Authorization:"+plac
 //     secret and for a namespace outside the atespace's authorization
 //     (default-deny), 500 for a URI naming a provider this gateway does not
 //     serve.
-//
-// A request without the header is not covered: the API forwards it without
-// the credential, which the gateway does not implement yet.
 //
 // The gate: this needs the install made with the bundled provider, which
 // deploys the k8s-credential-provider and points the egress gateway at it.
@@ -124,6 +124,13 @@ func TestActorEgressCredentialInjection(t *testing.T) {
 	replaced := fetchEcho(t, ctx, rc, id, echoOrigin, withPlaceholder)
 	if got := assertEchoedAuthorization(t, "injection fetch", replaced); got != wantHeader {
 		t.Errorf("upstream received Authorization %q, want the injected %q", got, wantHeader)
+	}
+
+	// Without the placeholder there is nothing to replace: the request goes
+	// out unchanged, with no Authorization header added.
+	unasked := fetchEcho(t, ctx, rc, id, echoOrigin, nil)
+	if got := assertEchoedAuthorization(t, "fetch without the header", unasked); got != "" {
+		t.Errorf("upstream received Authorization %q on a request that did not carry it, want none", got)
 	}
 
 	// The same origin over plain HTTP: the cleartext leg skips injection and

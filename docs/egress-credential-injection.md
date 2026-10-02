@@ -110,18 +110,18 @@ interpret. A URI the provider refuses denies the request with 403.
 | Situation | Outcome |
 |---|---|
 | Request decided by an `https` rule, carries the header, provider configured, credential resolves | Header value replaced with the credential; request re-originated upstream |
-| Request decided by an `https` rule, does not carry the header | Forwarded without the credential. |
+| Request decided by an `https` rule, does not carry the header | Forwarded unchanged; no credential is fetched |
 | Cleartext request decided by an `http` rule with `replaceHeaders` | Injection **skipped**, request passes through without the credential — a secret is never put on a cleartext wire |
-| Intercepted HTTPS request, no provider configured (`--credential-provider='{"enabled":false}'`) | **500**, fail closed |
+| Request decided by an `https` rule, carries the header, no provider configured (`--credential-provider='{"enabled":false}'`) | **500**, fail closed |
 | Secret missing, or namespace not authorized for the atespace | **403**, fail closed |
 | Provider unreachable or timed out | **503**, fail closed but retryable |
 | Provider returns an empty credential, or one containing control characters | **503**, fail closed |
 | URI names a provider class this gateway does not serve; unusable header name; unparseable URI | **500**, fail closed |
 
-Only a cleartext request skips injection. On an intercepted HTTPS request,
-any failure to produce the credential the policy requires, including having no
-provider, denies the request rather than letting it out without the
-credential.
+Only a request that does not carry the header, or a cleartext one, skips
+injection. On an intercepted HTTPS request that carries it, any failure to
+produce the credential, including having no provider, denies the request
+rather than letting it out without the credential.
 
 ## For cluster admins
 
