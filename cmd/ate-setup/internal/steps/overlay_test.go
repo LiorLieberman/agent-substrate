@@ -396,7 +396,7 @@ func pinnedWorkloads(t *testing.T, manifest []byte) (pinned map[string]string, a
 // Under --cordon-control-plane every control plane apply path has to carry the
 // pinning, since each workload reaches the cluster through a different one:
 // the system bundle, the lone redeploy files, the podcert overlay, the
-// postgres file, and the egress variants. postgres gets a pool of its own;
+// postgres file, the egress variants, and the bundled credential provider. postgres gets a pool of its own;
 // every other control plane workload shares one.
 func TestRenderCordonControlPlane(t *testing.T) {
 	root := repoRoot(t)
@@ -455,6 +455,11 @@ func TestRenderCordonControlPlane(t *testing.T) {
 			cfg:  config.Config{Router: config.RouterAgentgateway},
 			path: func(e *Env) string { return e.Cfg.Path(installDir + "/agentgateway-egress") },
 			want: []string{"atenet-egress"},
+		},
+		{
+			name: "credential provider file",
+			path: func(e *Env) string { return e.k8sCredentialProviderPath(k8sCredentialProviderManifest) },
+			want: []string{k8sCredentialProviderDeployment},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

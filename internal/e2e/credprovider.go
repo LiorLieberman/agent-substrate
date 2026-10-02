@@ -51,8 +51,8 @@ const (
 // authorization policy that lets the probe atespaces resolve it. The provider
 // Deployment is restarted after the policy ConfigMap is applied because it
 // reads the policy once at startup. When the test passes the fixture is
-// removed and the shipped policy put back, so the provider still has a
-// ConfigMap to mount the next time it restarts.
+// removed, the shipped policy put back, and the provider restarted again so
+// it drops the fixture's grants.
 //
 // A failed test keeps the fixture so the provider's logs can be read against
 // it; the next run re-applies it.
@@ -76,6 +76,12 @@ func ConfigureCredentialProvider(t *testing.T) {
 		RunCmd(t, "kubectl", args...)
 	}
 
+	// The manifests pin the canonical namespace.
+	ns := installdefaults.SystemNamespace
+	restart := func() {
+		kubectl("-n", ns, "rollout", "restart", "deployment/k8s-credential-provider")
+	}
+
 	fixture := filepath.Join(root, credinjectFixtureManifest)
 	kubectl("apply", "-f", fixture)
 	t.Cleanup(func() {
@@ -84,10 +90,12 @@ func ConfigureCredentialProvider(t *testing.T) {
 		}
 		kubectl("delete", "--ignore-not-found", "-f", fixture)
 		kubectl("apply", "-f", filepath.Join(root, credentialProviderPolicyManifest))
+		// Not waiting for this rollout keeps the new pod's startup out of the
+		// run. The old pod, still holding the fixture's grants, is replaced
+		// once the new one is ready.
+		restart()
 	})
 
-	// The manifests pin the canonical namespace.
-	ns := installdefaults.SystemNamespace
-	kubectl("-n", ns, "rollout", "restart", "deployment/k8s-credential-provider")
+	restart()
 	kubectl("-n", ns, "rollout", "status", "deployment/k8s-credential-provider", "--timeout=3m")
 }
