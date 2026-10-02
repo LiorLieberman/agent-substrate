@@ -23,10 +23,9 @@ import (
 	"github.com/agent-substrate/substrate/cmd/ate-setup/internal/kube"
 )
 
-// The reconcile step waits on, checks for, and dials the provider by name, and
-// creates its policy ConfigMap only when the one the Deployment mounts is
-// absent. Each of those names is read from the manifests here, so a rename
-// there fails this test rather than the next install.
+// The deploy steps refer to the provider's objects by name. This checks those
+// names against the manifests, so a rename fails here rather than in the next
+// install.
 func TestK8sCredentialProviderManifestsAgree(t *testing.T) {
 	e := &Env{Cfg: &config.Config{Root: repoRoot(t)}}
 
@@ -42,7 +41,7 @@ func TestK8sCredentialProviderManifestsAgree(t *testing.T) {
 		t.Errorf("deployment/%s is in namespace %q, want %q", k8sCredentialProviderDeployment, ns, NamespaceAteSystem)
 	}
 	if findObject(provider, "ConfigMap", k8sCredentialProviderPolicyConfigMap) != nil {
-		t.Errorf("provider manifest carries configmap/%s itself; the reconcile step must own whether it is applied", k8sCredentialProviderPolicyConfigMap)
+		t.Errorf("provider manifest carries configmap/%s itself; the deploy step must own whether it is applied", k8sCredentialProviderPolicyConfigMap)
 	}
 	if got := mountedConfigMaps(dep); len(got) != 1 || got[0] != k8sCredentialProviderPolicyConfigMap {
 		t.Errorf("deployment/%s mounts ConfigMaps %v, want only %q", k8sCredentialProviderDeployment, got, k8sCredentialProviderPolicyConfigMap)

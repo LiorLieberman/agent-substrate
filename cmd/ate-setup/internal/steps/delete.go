@@ -27,13 +27,17 @@ import (
 // DeleteAteSystem removes the control plane.
 //
 // PostgreSQL, the agentgateway ConfigMap, the bundled credential provider, and
-// the CRDs are deleted explicitly afterwards because they are not part of
-// every rendered bundle: which of them the install created depends on the
-// router and credential provider that were selected, and teardown must not
-// depend on remembering that. The provider's ClusterRole and binding would
-// otherwise outlive the namespace.
+// the CRDs are deleted explicitly because they are not part of every rendered
+// bundle: which of them the install created depends on the router and
+// credential provider that were selected, and teardown must not depend on
+// remembering that. The provider goes first so that a later failure cannot
+// leave its ClusterRole and binding behind.
 func (e *Env) DeleteAteSystem(ctx context.Context) error {
 	log.Step("delete_ate_system")
+
+	if err := e.Kube.DeletePath(ctx, e.k8sCredentialProviderPath(k8sCredentialProviderManifest)); err != nil {
+		return err
+	}
 
 	if e.Cfg.Kind {
 		manifest, err := e.Kustomize(installDir + "/kind")
@@ -67,20 +71,22 @@ func (e *Env) DeleteAteSystem(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := e.Kube.DeletePath(ctx, e.k8sCredentialProviderPath(k8sCredentialProviderManifest)); err != nil {
-		return err
-	}
 	if err := e.Kube.WaitDeleted(ctx, schema.GroupVersionKind{Version: "v1", Kind: "Namespace"}, "", e.Namespace(), e.Cfg.WaitTimeout(BootstrapTimeout)); err != nil {
 		return err
 	}
 	return e.UnlabelNodesSubstrateVersion(ctx)
 }
 
-// DeleteAtenet removes the atenet dataplane, and with it the bundled
-// credential provider deploy atenet may have installed. The provider's policy
-// ConfigMap stays: it is the operator's allow-list, not the install's.
+// DeleteAtenet removes the atenet dataplane and the bundled credential
+// provider, deleting the provider first so that a later failure cannot leave
+// its ClusterRole and binding behind. The provider's policy ConfigMap stays:
+// it holds the operator's allow-list.
 func (e *Env) DeleteAtenet(ctx context.Context) error {
 	log.Step("delete_atenet")
+
+	if err := e.Kube.DeletePath(ctx, e.k8sCredentialProviderPath(k8sCredentialProviderManifest)); err != nil {
+		return err
+	}
 
 	for _, path := range [][]string{
 		{"atenet-router.yaml"},
@@ -91,7 +97,7 @@ func (e *Env) DeleteAtenet(ctx context.Context) error {
 			return err
 		}
 	}
-	return e.Kube.DeletePath(ctx, e.k8sCredentialProviderPath(k8sCredentialProviderManifest))
+	return nil
 }
 
 // Deleter is the demo teardown DeleteAll drives.

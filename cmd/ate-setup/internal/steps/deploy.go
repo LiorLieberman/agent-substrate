@@ -64,8 +64,8 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 	if err := e.RequireCanonicalNamespace("deploy ate-system"); err != nil {
 		return err
 	}
-	// Fail fast on an unusable build version or a missing credential provider
-	// selection before touching the cluster.
+	// Fail fast on an unusable build version or credential provider selection
+	// before touching the cluster.
 	if _, _, err := e.SubstrateVersion(); err != nil {
 		return err
 	}
@@ -160,7 +160,12 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 	}
 	// After the podcertificate controller: the provider serves with a
 	// projected pod certificate.
-	if err := e.reconcileK8sCredentialProvider(ctx, provider); err != nil {
+	if provider.Kubernetes() {
+		err = e.deployK8sCredentialProvider(ctx)
+	} else {
+		err = e.removeK8sCredentialProvider(ctx)
+	}
+	if err != nil {
 		return err
 	}
 	if err := e.applyAtenetEgress(ctx); err != nil {
@@ -378,7 +383,6 @@ func (e *Env) DeployAtelet(ctx context.Context) error {
 func (e *Env) DeployAtenet(ctx context.Context) error {
 	log.Step("deploy_atenet")
 
-	// Before anything is applied: the egress render needs the answer.
 	provider, err := e.Cfg.CredentialProvider()
 	if err != nil {
 		return err
@@ -406,7 +410,12 @@ func (e *Env) DeployAtenet(ctx context.Context) error {
 	if err := e.EnsureEgressMITMCAPoolSecret(ctx); err != nil {
 		return err
 	}
-	if err := e.reconcileK8sCredentialProvider(ctx, provider); err != nil {
+	if provider.Kubernetes() {
+		err = e.deployK8sCredentialProvider(ctx)
+	} else {
+		err = e.removeK8sCredentialProvider(ctx)
+	}
+	if err != nil {
 		return err
 	}
 	if err := e.applyAtenetEgress(ctx); err != nil {

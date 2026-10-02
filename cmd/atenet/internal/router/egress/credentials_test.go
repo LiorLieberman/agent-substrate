@@ -99,64 +99,41 @@ func TestInjectionOnTLSLeg(t *testing.T) {
 	}
 }
 
-// When injection cannot be performed — a cleartext leg, or no provider
-// configured — the request is allowed through with no header added, and any
-// provider is never dialed, because the secret must not go out over cleartext or
-// block egress the policy allowed.
-func TestInjectionSkippedAndPassedThrough(t *testing.T) {
-	tests := []struct {
-		name     string
-		policy   *ateapipb.EgressPolicy
-		provider *fakeProvider // nil means no provider configured
-		leg      string
-	}{
-		{
-			name:     "cleartext leg skips injection",
-			policy:   cleartextInjectionPolicy("api.example.com"),
-			provider: &fakeProvider{resp: bearerTokenResponse("s3cr3t")},
-			leg:      extproc.EgressCleartextFilterChainName,
-		},
-		{
-			name:     "no provider configured skips injection",
-			policy:   credentialInjectionPolicySample("api.example.com"),
-			provider: nil,
-			leg:      extproc.EgressTLSMITMFilterChainName,
-		},
+// On a cleartext leg the request is allowed through with no header added, and
+// the provider is never dialed, because the secret must not go out over
+// cleartext.
+func TestInjectionSkippedOnCleartextLeg(t *testing.T) {
+	provider := &fakeProvider{resp: bearerTokenResponse("s3cr3t")}
+	h := injectionHandlerFor(cleartextInjectionPolicy("api.example.com"), provider, injectionProviderName)
+	res, err := h.HandleRequestHeaders(context.Background(),
+		innerMetadata(extproc.EgressCleartextFilterChainName, "GET", "api.example.com", nil))
+	if err != nil {
+		t.Fatalf("HandleRequestHeaders: %v", err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			var h *Handler
-			if tc.provider == nil {
-				h = injectionHandlerFor(tc.policy, nil, injectionProviderName)
-			} else {
-				h = injectionHandlerFor(tc.policy, tc.provider, injectionProviderName)
-			}
-			res, err := h.HandleRequestHeaders(context.Background(),
-				innerMetadata(tc.leg, "GET", "api.example.com", nil))
-			if err != nil {
-				t.Fatalf("HandleRequestHeaders: %v", err)
-			}
-			if got := res.Response.GetResponse().GetHeaderMutation().GetSetHeaders(); len(got) != 0 {
-				t.Errorf("got %d injected headers, want 0 (injection should be skipped)", len(got))
-			}
-			if tc.provider != nil && tc.provider.got != nil {
-				t.Error("provider was dialed; injection should be skipped without a callout")
-			}
-		})
+	if got := res.Response.GetResponse().GetHeaderMutation().GetSetHeaders(); len(got) != 0 {
+		t.Errorf("got %d injected headers, want 0 (injection should be skipped)", len(got))
+	}
+	if provider.got != nil {
+		t.Error("provider was dialed; injection should be skipped without a callout")
 	}
 }
 
-// Once injection is attempted on the TLS leg with a provider present, a failure
-// to produce the promised credential fails closed rather than forwarding the
-// request without it.
+// On the TLS leg, a failure to produce the promised credential denies the
+// request rather than forwarding it without the credential.
 func TestInjectionDenials(t *testing.T) {
 	tests := []struct {
 		name         string
-		provider     *fakeProvider
+		provider     credproviderpb.CredentialProviderClient
 		providerName string
 		leg          string
 		want         envoy_type.StatusCode
 	}{
+		{
+			name:         "no provider configured is refused",
+			providerName: injectionProviderName,
+			leg:          extproc.EgressTLSMITMFilterChainName,
+			want:         envoy_type.StatusCode_InternalServerError,
+		},
 		{
 			name:         "credential URI for another provider is refused",
 			provider:     &fakeProvider{resp: bearerTokenResponse("s3cr3t")},

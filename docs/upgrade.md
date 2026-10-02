@@ -522,7 +522,8 @@ go run ./cmd/ate-setup deploy ate-system --credential-provider-name=<as installe
 
 `deploy ate-system` requires the credential provider selection; pass the one
 the install was made with (`off` if it never had one), or carry it in
-`ATE_CREDENTIAL_PROVIDER_NAME`.
+`ATE_CREDENTIAL_PROVIDER_NAME`. The value is a bare provider name: `k8s.io`,
+not `ate-secret://k8s.io`.
 
 The second command rolls atenet and converges the rest of the
 install, postgres included: on a cordoned install it moves postgres to

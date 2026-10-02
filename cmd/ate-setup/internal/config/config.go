@@ -181,12 +181,10 @@ type Config struct {
 	// AdditionalEgressExtprocService is the optional NS/SVC:PORT external processor filter.
 	AdditionalEgressExtprocService string
 
-	// CredentialProviderName is the credential provider the egress gateway's
-	// MITM-leg handler injects credentials from: CredentialProviderOff, the
-	// bundled K8sCredentialProviderName, or another ate-secret:// prefix. The
-	// deploy paths that render the egress gateway require it; see
-	// CredentialProvider. CredentialProviderAddress is where the gateway dials
-	// it, required for any provider but the bundled one.
+	// CredentialProviderName is the provider the egress gateway injects
+	// credentials from: CredentialProviderOff, K8sCredentialProviderName, or the
+	// name of a provider the operator deploys. CredentialProviderAddress is
+	// where the gateway dials it, required for any provider but the bundled one.
 	CredentialProviderName    string
 	CredentialProviderAddress string
 
@@ -468,39 +466,31 @@ func validate(cfg *Config) error {
 	return cfg.validateCredentialProvider()
 }
 
-// CredentialProviderOff is the --credential-provider-name value that leaves
-// egress credential injection off: the gateway gets no provider flags and no
-// provider is deployed.
+// CredentialProviderOff turns egress credential injection off.
 const CredentialProviderOff = "off"
 
-// The bundled Kubernetes Secrets credential provider, the one
-// --credential-provider-name selects by its ate-secret:// prefix and the only
-// one the installer deploys itself. Its address is the Service in
+// The bundled Kubernetes Secrets credential provider, the only one the
+// installer deploys. The address is the Service in
 // manifests/egress-credential-injection/k8s-credential-provider.yaml.
 const (
-	K8sCredentialProviderName    = "ate-secret://k8s.io"
+	K8sCredentialProviderName    = "k8s.io"
 	K8sCredentialProviderAddress = "k8s-credential-provider." + installdefaults.SystemNamespace + ".svc:50051"
 )
-
-// credentialURIScheme is the scheme of a policy credential URI and so of the
-// provider prefix the gateway is told to serve.
-const credentialURIScheme = "ate-secret"
 
 // CredentialProvider is the credential provider the egress gateway is pointed
 // at. The zero value means injection is off.
 type CredentialProvider struct {
-	// Name is the ate-secret:// prefix of the credential URIs the gateway
-	// serves, as --credential-provider-name on the gateway.
+	// Name is the host of the ate-secret:// credential URIs the provider
+	// serves, e.g. k8s.io.
 	Name string
 	// Address is the host:port the gateway dials the provider at.
 	Address string
 }
 
-// Enabled reports whether the gateway is given a provider at all.
+// Enabled reports whether the gateway is given a provider.
 func (p CredentialProvider) Enabled() bool { return p.Name != "" }
 
-// Kubernetes reports whether the provider is the bundled Kubernetes Secrets
-// one, which the installer deploys alongside the gateway.
+// Kubernetes reports whether the provider is the bundled one.
 func (p CredentialProvider) Kubernetes() bool { return p.Name == K8sCredentialProviderName }
 
 // ServerName is the SAN the gateway expects on the provider's serving
@@ -512,15 +502,14 @@ func (p CredentialProvider) ServerName() string {
 	return p.Address
 }
 
-// CredentialProvider resolves --credential-provider-name and
-// --credential-provider-address. An absent name is an error here, not in
-// validate: only the deploys that render the egress gateway need an answer,
-// and the other commands must not demand the flag.
+// CredentialProvider resolves the provider flags. A missing name is reported
+// here rather than in validate because only the deploys that render the egress
+// gateway need it.
 func (c *Config) CredentialProvider() (CredentialProvider, error) {
 	switch c.CredentialProviderName {
 	case "":
-		return CredentialProvider{}, fmt.Errorf("--credential-provider-name is required (or ATE_CREDENTIAL_PROVIDER_NAME): %s to leave egress credential injection off, %s for the bundled Kubernetes Secrets provider, or another %s:// prefix with --credential-provider-address",
-			CredentialProviderOff, K8sCredentialProviderName, credentialURIScheme)
+		return CredentialProvider{}, fmt.Errorf("--credential-provider-name is required (or ATE_CREDENTIAL_PROVIDER_NAME): %s to turn egress credential injection off, %s for the bundled Kubernetes Secrets provider, or another provider name with --credential-provider-address",
+			CredentialProviderOff, K8sCredentialProviderName)
 	case CredentialProviderOff:
 		return CredentialProvider{}, nil
 	}
@@ -530,25 +519,20 @@ func (c *Config) CredentialProvider() (CredentialProvider, error) {
 	}, nil
 }
 
-// validateCredentialProvider rejects a malformed or unsatisfiable provider
-// selection as soon as the flags are read. The address is ignored with
-// CredentialProviderOff so that a value left in the environment does not keep
-// injection from being switched off from the command line.
+// validateCredentialProvider ignores the address when injection is off, so an
+// address left in the environment cannot block turning it off.
 func (c *Config) validateCredentialProvider() error {
 	name := c.CredentialProviderName
 	if name == "" || name == CredentialProviderOff {
 		return nil
 	}
-	u, err := url.Parse(name)
-	if err != nil {
-		return fmt.Errorf("--credential-provider-name %q: %w", name, err)
-	}
-	if u.Scheme != credentialURIScheme || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
-		return fmt.Errorf("--credential-provider-name must be %s or an %s://<provider> prefix such as %s, got %q",
-			CredentialProviderOff, credentialURIScheme, K8sCredentialProviderName, name)
+	// The gateway matches the name against the host of each credential URI.
+	if u, err := url.Parse("ate-secret://" + name); err != nil || u.Host != name {
+		return fmt.Errorf("--credential-provider-name must be %s or a provider name such as %s, got %q",
+			CredentialProviderOff, K8sCredentialProviderName, name)
 	}
 	if c.Router != RouterEnvoy {
-		return fmt.Errorf("--credential-provider-name=%s requires --atenet-dataplane=envoy; the agentgateway dataplane has no credential provider configuration, pass --credential-provider-name=%s", name, CredentialProviderOff)
+		return fmt.Errorf("--credential-provider-name=%s requires --atenet-dataplane=envoy; the agentgateway dataplane cannot inject credentials, pass --credential-provider-name=%s", name, CredentialProviderOff)
 	}
 	if name != K8sCredentialProviderName && c.CredentialProviderAddress == "" {
 		return fmt.Errorf("--credential-provider-name=%s needs --credential-provider-address: only the bundled %s provider has a known address", name, K8sCredentialProviderName)

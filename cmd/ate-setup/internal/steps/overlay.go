@@ -146,7 +146,6 @@ func (e *Env) renderAtenetEgressManifest(ctx context.Context) ([]byte, error) {
 		if general {
 			return nil, fmt.Errorf("--experimental-additional-egress-extproc-service requires --atenet-dataplane=envoy")
 		}
-		// config.Load has already refused a provider on this dataplane.
 		return e.renderResolve(ctx, e.Cfg.Path(installDir+"/agentgateway-egress"))
 	}
 
@@ -187,10 +186,9 @@ func (e *Env) patchEnvoyDataplaneImage(raw []byte, imageRef string) []byte {
 }
 
 // patchAtenetEgressInject replaces the #ATE_EGRESS_INJECT_FLAGS marker in the
-// egress sidecar's args with the credential-provider flags, or with nothing
-// when injection is off: an empty --credential-provider-address is how the
-// gateway knows it has no provider. It takes the manifest bytes rather than
-// reading the file so it can run after the general patch.
+// egress sidecar's args with the credential-provider flags, or removes it when
+// injection is off, which leaves the gateway with no provider. It takes the
+// manifest bytes so it can run after the general patch.
 func (e *Env) patchAtenetEgressInject(raw []byte, provider config.CredentialProvider) ([]byte, error) {
 	var flagsBlock string
 	if provider.Enabled() {
@@ -377,8 +375,7 @@ func (e *Env) applyAtenetEgress(ctx context.Context) error {
 		return err
 	}
 
-	// The render above has resolved the provider selection, so any name but
-	// off means the gateway was given a provider.
+	// The render above has already rejected a missing provider name.
 	if running && (e.Cfg.AdditionalEgressExtprocService != "" || e.Cfg.CredentialProviderName != config.CredentialProviderOff) {
 		if err := e.Kube.RolloutRestartDeployment(ctx, e.Namespace(), "atenet-egress", time.Now()); err != nil {
 			return err

@@ -547,11 +547,10 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{"extproc invalid format", Options{AdditionalEgressExtprocService: "extproc:50051"}},
 		{"extproc agentgateway", Options{Router: RouterAgentgateway, AdditionalEgressExtprocService: "ate-system/extproc:50051"}},
 		{"provider agentgateway", Options{Router: RouterAgentgateway, CredentialProviderName: K8sCredentialProviderName}},
-		{"provider not a URI", Options{CredentialProviderName: "k8s.io"}},
-		{"provider wrong scheme", Options{CredentialProviderName: "https://k8s.io"}},
-		{"provider with a path", Options{CredentialProviderName: "ate-secret://k8s.io/default"}},
-		{"provider without a host", Options{CredentialProviderName: "ate-secret://"}},
-		{"other provider without an address", Options{CredentialProviderName: "ate-secret://vault.example.com"}},
+		{"provider with a scheme", Options{CredentialProviderName: "ate-secret://k8s.io"}},
+		{"provider with a path", Options{CredentialProviderName: "k8s.io/default"}},
+		{"provider with a query", Options{CredentialProviderName: "k8s.io?x=1"}},
+		{"other provider without an address", Options{CredentialProviderName: "vault.example.com"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := Load(tc.opts); err == nil {
@@ -589,8 +588,8 @@ func TestCredentialProvider(t *testing.T) {
 		},
 		{
 			name: "another provider",
-			opts: Options{CredentialProviderName: "ate-secret://vault.example.com", CredentialProviderAddress: "vault.ate-system.svc:50051"},
-			want: CredentialProvider{Name: "ate-secret://vault.example.com", Address: "vault.ate-system.svc:50051"},
+			opts: Options{CredentialProviderName: "vault.example.com", CredentialProviderAddress: "vault.ate-system.svc:50051"},
+			want: CredentialProvider{Name: "vault.example.com", Address: "vault.ate-system.svc:50051"},
 		},
 		{
 			name: "the environment selects too",

@@ -55,7 +55,7 @@ func TestPatchAtenetEgressInject(t *testing.T) {
 			name:     "kubernetes",
 			provider: config.CredentialProvider{Name: config.K8sCredentialProviderName, Address: config.K8sCredentialProviderAddress},
 			want: []string{
-				"--credential-provider-name=ate-secret://k8s.io",
+				"--credential-provider-name=k8s.io",
 				"--credential-provider-address=k8s-credential-provider.ate-system.svc:50051",
 				"--credential-provider-server-name=k8s-credential-provider.ate-system.svc",
 				"--credential-provider-ca-file=",
