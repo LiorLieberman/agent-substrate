@@ -19,8 +19,10 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
-	"net/url"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -28,6 +30,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/agent-substrate/substrate/cmd/ate-setup/internal/images"
 	"github.com/agent-substrate/substrate/internal/installdefaults"
@@ -181,12 +185,9 @@ type Config struct {
 	// AdditionalEgressExtprocService is the optional NS/SVC:PORT external processor filter.
 	AdditionalEgressExtprocService string
 
-	// CredentialProviderName is the provider the egress gateway injects
-	// credentials from: CredentialProviderOff, K8sCredentialProviderName, or the
-	// name of a provider the operator deploys. CredentialProviderAddress is
-	// where the gateway dials it, required for any provider but the bundled one.
-	CredentialProviderName    string
-	CredentialProviderAddress string
+	// CredentialProviderJSON is the --credential-provider value; see
+	// CredentialProvider for its schema.
+	CredentialProviderJSON string
 
 	// AnthropicAPIKey is required only by the claude-code-multiplex demo.
 	AnthropicAPIKey string
@@ -248,8 +249,7 @@ type Options struct {
 	ClusterSize                    string
 	CordonControlPlane             bool
 	AdditionalEgressExtprocService string
-	CredentialProviderName         string
-	CredentialProviderAddress      string
+	CredentialProvider             string
 	OtlpEndpoint                   string
 
 	// Image source selection.
@@ -371,8 +371,7 @@ func Load(opts Options) (*Config, error) {
 		ClusterSize:                    firstNonEmpty(opts.ClusterSize, env["ATE_INSTALL_CLUSTER_SIZE"], ClusterSizeSize0),
 		CordonControlPlane:             cordon,
 		AdditionalEgressExtprocService: extproc,
-		CredentialProviderName:         firstNonEmpty(opts.CredentialProviderName, env["ATE_CREDENTIAL_PROVIDER_NAME"]),
-		CredentialProviderAddress:      firstNonEmpty(opts.CredentialProviderAddress, env["ATE_CREDENTIAL_PROVIDER_ADDRESS"]),
+		CredentialProviderJSON:         firstNonEmpty(opts.CredentialProvider, env["ATE_CREDENTIAL_PROVIDER"]),
 		AnthropicAPIKey:                env["ANTHROPIC_API_KEY"],
 		OtlpEndpoint:                   firstNonEmpty(opts.OtlpEndpoint, env["ATE_OTLP_ENDPOINT"]),
 		BenchmarkActorMemory:           env["BENCHMARK_ACTOR_MEMORY"],
@@ -463,19 +462,35 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("--experimental-additional-egress-extproc-service requires --atenet-dataplane=envoy")
 		}
 	}
-	return cfg.validateCredentialProvider()
+	if cfg.CredentialProviderJSON != "" {
+		if _, err := cfg.CredentialProvider(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// CredentialProviderOff turns egress credential injection off.
-const CredentialProviderOff = "off"
-
-// The bundled Kubernetes Secrets credential provider, the only one the
-// installer deploys. The address is the Service in
+// The bundled Kubernetes Secrets provider, which the installer deploys with a
+// NetworkPolicy that admits only the egress gateway. Its default address is
+// the Service in
 // manifests/egress-credential-injection/k8s-credential-provider.yaml.
 const (
 	K8sCredentialProviderName    = "k8s.io"
 	K8sCredentialProviderAddress = "k8s-credential-provider." + installdefaults.SystemNamespace + ".svc:50051"
 )
+
+// credentialProviderUsage lists the accepted --credential-provider values.
+const credentialProviderUsage = `{"name":"k8s.io"} for the bundled Kubernetes Secrets provider, ` +
+	`{"enabled":false} to turn egress credential injection off, ` +
+	`or {"name":"<provider>","address":"<host>:<port>"} for a provider you deploy`
+
+// credentialProviderSpec is the schema of the --credential-provider JSON.
+type credentialProviderSpec struct {
+	// Enabled defaults to true when absent.
+	Enabled *bool  `json:"enabled"`
+	Name    string `json:"name"`
+	Address string `json:"address"`
+}
 
 // CredentialProvider is the credential provider the egress gateway is pointed
 // at. The zero value means injection is off.
@@ -502,42 +517,54 @@ func (p CredentialProvider) ServerName() string {
 	return p.Address
 }
 
-// CredentialProvider resolves the provider flags. A missing name is reported
-// here rather than in validate because only the deploys that render the egress
-// gateway need it.
+// CredentialProvider parses --credential-provider, a JSON object that either
+// turns injection off with enabled false or names a provider and its address.
+// Only the bundled provider has a default address. A missing value is reported here rather than in validate
+// because only the deploys that render the egress gateway need it.
 func (c *Config) CredentialProvider() (CredentialProvider, error) {
-	switch c.CredentialProviderName {
-	case "":
-		return CredentialProvider{}, fmt.Errorf("--credential-provider-name is required (or ATE_CREDENTIAL_PROVIDER_NAME): %s to turn egress credential injection off, %s for the bundled Kubernetes Secrets provider, or another provider name with --credential-provider-address",
-			CredentialProviderOff, K8sCredentialProviderName)
-	case CredentialProviderOff:
+	raw := c.CredentialProviderJSON
+	if raw == "" {
+		return CredentialProvider{}, fmt.Errorf("--credential-provider is required (or ATE_CREDENTIAL_PROVIDER): %s", credentialProviderUsage)
+	}
+	invalid := func(format string, args ...any) (CredentialProvider, error) {
+		return CredentialProvider{}, fmt.Errorf("invalid --credential-provider '%s': %s", raw, fmt.Sprintf(format, args...))
+	}
+
+	var spec credentialProviderSpec
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&spec); err != nil {
+		return invalid("%v; want %s", err, credentialProviderUsage)
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return invalid("want a single JSON object")
+	}
+
+	if spec.Enabled != nil && !*spec.Enabled {
+		if spec.Name != "" || spec.Address != "" {
+			return invalid("enabled false takes no name or address")
+		}
 		return CredentialProvider{}, nil
 	}
-	return CredentialProvider{
-		Name:    c.CredentialProviderName,
-		Address: firstNonEmpty(c.CredentialProviderAddress, K8sCredentialProviderAddress),
-	}, nil
-}
-
-// validateCredentialProvider ignores the address when injection is off, so an
-// address left in the environment cannot block turning it off.
-func (c *Config) validateCredentialProvider() error {
-	name := c.CredentialProviderName
-	if name == "" || name == CredentialProviderOff {
-		return nil
+	if spec.Name == "" {
+		return invalid("name is required; want %s", credentialProviderUsage)
 	}
-	// The gateway matches the name against the host of each credential URI.
-	if u, err := url.Parse("ate-secret://" + name); err != nil || u.Host != name {
-		return fmt.Errorf("--credential-provider-name must be %s or a provider name such as %s, got %q",
-			CredentialProviderOff, K8sCredentialProviderName, name)
+	// The name is the host of the credential URIs the provider serves.
+	if errs := validation.IsDNS1123Subdomain(spec.Name); len(errs) > 0 {
+		return invalid("name %q is not a valid DNS name: %s", spec.Name, strings.Join(errs, "; "))
 	}
 	if c.Router != RouterEnvoy {
-		return fmt.Errorf("--credential-provider-name=%s requires --atenet-dataplane=envoy; the agentgateway dataplane cannot inject credentials, pass --credential-provider-name=%s", name, CredentialProviderOff)
+		return invalid(`a credential provider requires --atenet-dataplane=envoy; pass {"enabled":false} on the agentgateway dataplane`)
 	}
-	if name != K8sCredentialProviderName && c.CredentialProviderAddress == "" {
-		return fmt.Errorf("--credential-provider-name=%s needs --credential-provider-address: only the bundled %s provider has a known address", name, K8sCredentialProviderName)
+	if spec.Address == "" {
+		if spec.Name != K8sCredentialProviderName {
+			return invalid("a provider you deploy needs an address as host:port")
+		}
+		spec.Address = K8sCredentialProviderAddress
+	} else if host, port, err := net.SplitHostPort(spec.Address); err != nil || host == "" || port == "" {
+		return invalid("address must be host:port, got %q", spec.Address)
 	}
-	return nil
+	return CredentialProvider{Name: spec.Name, Address: spec.Address}, nil
 }
 
 func validateExtprocService(spec string) error {
@@ -676,11 +703,8 @@ func (c *Config) ScriptEnv() []string {
 	if c.AdditionalEgressExtprocService != "" {
 		merged["ATE_ADDITIONAL_EGRESS_EXTPROC_SERVICE"] = c.AdditionalEgressExtprocService
 	}
-	if c.CredentialProviderName != "" {
-		merged["ATE_CREDENTIAL_PROVIDER_NAME"] = c.CredentialProviderName
-	}
-	if c.CredentialProviderAddress != "" {
-		merged["ATE_CREDENTIAL_PROVIDER_ADDRESS"] = c.CredentialProviderAddress
+	if c.CredentialProviderJSON != "" {
+		merged["ATE_CREDENTIAL_PROVIDER"] = c.CredentialProviderJSON
 	}
 
 	env := make([]string, 0, len(merged))

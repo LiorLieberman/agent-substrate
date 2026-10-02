@@ -18,8 +18,8 @@ the router capacity benchmark — see
 4. `docker build && docker push` builds the runner image for each test type
    in use, tagged with the commit hash: `${KO_DOCKER_REPO}/locust-test:<commit>`
    and/or `${KO_DOCKER_REPO}/nighthawk-ingress-test:<commit>`.
-5. `hack/install-ate.sh --deploy-ate-system` (with `ATE_CREDENTIAL_PROVIDER_NAME`
-   in `.ate-dev-env.sh`, or `--credential-provider-name` in the test's
+5. `hack/install-ate.sh --deploy-ate-system` (with `ATE_CREDENTIAL_PROVIDER`
+   in `.ate-dev-env.sh`, or `--credential-provider` in the test's
    `ateArgs`) + `benchmarking/workloads/deploy.sh
    --deploy --sandbox-class <class>` (these build & push substrate / workload
    images via `ko` as part of their deploy steps — there's no separate

@@ -517,13 +517,17 @@ ate-controller moved in step 2. From the same checkout, move
 
 ```bash
 go run ./cmd/ate-setup deploy apiserver
-go run ./cmd/ate-setup deploy ate-system --credential-provider-name=<as installed>
+go run ./cmd/ate-setup deploy ate-system --credential-provider='<as installed>'
 ```
 
 `deploy ate-system` requires the credential provider selection; pass the one
-the install was made with (`off` if it never had one), or carry it in
-`ATE_CREDENTIAL_PROVIDER_NAME`. The value is a bare provider name: `k8s.io`,
-not `ate-secret://k8s.io`.
+the install was made with, or carry it in `ATE_CREDENTIAL_PROVIDER`. An install
+made with `--experimental-egress-credential-injection` and the bundled provider
+is `{"name":"k8s.io"}`; one without injection is `{"enabled":false}`. The
+selection replaces `--credential-provider-name` and
+`--credential-provider-address`: a provider you deploy yourself is
+`{"name":"<provider>","address":"<host>:<port>"}`, with the name bare
+(`vault.example.com`, not `ate-secret://vault.example.com`).
 
 The second command rolls atenet and converges the rest of the
 install, postgres included: on a cordoned install it moves postgres to

@@ -48,13 +48,13 @@ export BUCKET_NAME=snapshot-substrate-test-${PROJECT_ID}
 
 export KO_DOCKER_REPO="gcr.io/${PROJECT_ID}/ate-images"
 
-# Credential provider the egress gateway injects credentials from; the install
-# requires a choice. "off" leaves egress credential injection off,
-# "k8s.io" deploys and uses the bundled Kubernetes Secrets
-# provider, any other name is a provider you deploy yourself
-# (then also set ATE_CREDENTIAL_PROVIDER_ADDRESS). See
-# docs/egress-credential-injection.md.
-export ATE_CREDENTIAL_PROVIDER_NAME=off
+# Credential provider the egress gateway injects credentials from, as JSON; the
+# install requires a choice. {"name":"k8s.io"} deploys the bundled Kubernetes
+# Secrets provider, with a NetworkPolicy that admits only the egress gateway;
+# {"enabled":false} turns egress credential injection off, and is the only choice
+# on the agentgateway dataplane; {"name":"<provider>","address":"<host>:<port>"}
+# uses a provider you deploy yourself. See docs/egress-credential-injection.md.
+export ATE_CREDENTIAL_PROVIDER='{"name":"k8s.io"}'
 
 # Set this if you want to override the default build platforms
 export KO_DEFAULTPLATFORMS=linux/amd64

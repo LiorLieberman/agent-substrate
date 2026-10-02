@@ -64,9 +64,9 @@ func TestPatchAtenetEgressInject(t *testing.T) {
 		},
 		{
 			name:     "another provider",
-			provider: config.CredentialProvider{Name: "ate-secret://vault.example.com", Address: "vault.ate-system.svc:8200"},
+			provider: config.CredentialProvider{Name: "vault.example.com", Address: "vault.ate-system.svc:8200"},
 			want: []string{
-				"--credential-provider-name=ate-secret://vault.example.com",
+				"--credential-provider-name=vault.example.com",
 				"--credential-provider-address=vault.ate-system.svc:8200",
 				"--credential-provider-server-name=vault.ate-system.svc",
 			},
@@ -668,14 +668,14 @@ func TestRenderAtenetEgressManifestPrebuilt(t *testing.T) {
 	src := images.Source{Repo: "example.com/substrate", Tag: "v1.2.3"}
 	var looked []string
 	e := &Env{
-		Cfg: &config.Config{Root: repoRoot(t), Router: config.RouterEnvoy, Images: src, CredentialProviderName: config.CredentialProviderOff},
+		Cfg: &config.Config{Root: repoRoot(t), Router: config.RouterEnvoy, Images: src},
 		resolver: images.NewPrebuilt(src, func(_ context.Context, ref string) (string, error) {
 			looked = append(looked, ref)
 			return digest, nil
 		}),
 	}
 
-	out, err := e.renderAtenetEgressManifest(t.Context())
+	out, err := e.renderAtenetEgressManifest(t.Context(), config.CredentialProvider{})
 	if err != nil {
 		t.Fatalf("renderAtenetEgressManifest() error = %v", err)
 	}

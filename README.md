@@ -91,7 +91,7 @@ To quickly set up the complete environment:
 hack/create-kind-cluster.sh
 
 # install ate, PostgreSQL, rustfs
-hack/install-ate-kind.sh --deploy-ate-system --credential-provider-name=off
+hack/install-ate-kind.sh --deploy-ate-system --credential-provider='{"name":"k8s.io"}'
 
 # install counter demo
 hack/install-ate-kind.sh --deploy-demo-counter
@@ -152,13 +152,14 @@ prints the installed version, off the atelet DaemonSet the install created.
 
 4. Deploy the Agent Substrate system to your cluster:
    ```bash
-   ./hack/install-ate.sh --deploy-ate-system --credential-provider-name=off
+   ./hack/install-ate.sh --deploy-ate-system --credential-provider='{"name":"k8s.io"}'
    ```
 
-   `--credential-provider-name` is required: `off` leaves egress credential
-   injection out, `k8s.io` also deploys the bundled Kubernetes
-   Secrets provider (see [docs/egress-credential-injection.md](docs/egress-credential-injection.md)).
-   `ATE_CREDENTIAL_PROVIDER_NAME` in `.ate-dev-env.sh` is the same choice.
+   `--credential-provider` is required. `{"name":"k8s.io"}` also deploys the
+   bundled Kubernetes Secrets provider, with a NetworkPolicy that admits only
+   the egress gateway; `{"enabled":false}` turns egress credential injection off
+   (see [docs/egress-credential-injection.md](docs/egress-credential-injection.md)).
+   `ATE_CREDENTIAL_PROVIDER` in `.ate-dev-env.sh` is the same choice.
 
    Nodes that GKE adds later (autoscaling, auto-repair, node upgrades) are
    born with the node pool's labels, so the pool needs

@@ -168,7 +168,7 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := e.applyAtenetEgress(ctx); err != nil {
+	if err := e.applyAtenetEgress(ctx, provider); err != nil {
 		return err
 	}
 
@@ -418,7 +418,7 @@ func (e *Env) DeployAtenet(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := e.applyAtenetEgress(ctx); err != nil {
+	if err := e.applyAtenetEgress(ctx, provider); err != nil {
 		return err
 	}
 

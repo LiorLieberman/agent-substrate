@@ -155,7 +155,7 @@ jobs:
       # it has no agentgateway credential-provider configuration yet. Job-wide
       # because every ate-setup invocation reads it, including the control
       # plane redeploy in run-microvm-demo-kind.sh.
-      ATE_CREDENTIAL_PROVIDER_NAME: ${{ matrix.dataplane == 'envoy' && 'k8s.io' || 'off' }}
+      ATE_CREDENTIAL_PROVIDER: ${{ matrix.dataplane == 'envoy' && '{"name":"k8s.io"}' || '{"enabled":false}' }}
       # E2E_JUNIT_FILE is set per step, not here: the lanes below share this
       # job, so one job-level path would have each overwrite the last.
       ARTIFACTS: ${{ github.workspace }}/_artifacts

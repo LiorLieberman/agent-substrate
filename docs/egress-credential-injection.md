@@ -112,7 +112,7 @@ interpret. A URI the provider refuses denies the request with 403.
 | Request decided by an `https` rule, carries the header, provider configured, credential resolves | Header value replaced with the credential; request re-originated upstream |
 | Request decided by an `https` rule, does not carry the header | Forwarded without the credential. |
 | Cleartext request decided by an `http` rule with `replaceHeaders` | Injection **skipped**, request passes through without the credential — a secret is never put on a cleartext wire |
-| Intercepted HTTPS request, no provider configured (`--credential-provider-name=off`) | **500**, fail closed |
+| Intercepted HTTPS request, no provider configured (`--credential-provider='{"enabled":false}'`) | **500**, fail closed |
 | Secret missing, or namespace not authorized for the atespace | **403**, fail closed |
 | Provider unreachable or timed out | **503**, fail closed but retryable |
 | Provider returns an empty credential, or one containing control characters | **503**, fail closed |
@@ -130,24 +130,50 @@ credential.
 **1. The gateway.** The provider is selected when the egress gateway is
 deployed, with `--deploy-ate-system` or `--deploy-atenet`, and requires the
 Envoy dataplane (the default). The selection is required: an install that
-wants no injection says so with `off`.
+wants no injection says so with `{"enabled":false}`.
 
 ```bash
-hack/install-ate.sh --deploy-atenet --credential-provider-name=k8s.io
+hack/install-ate.sh --deploy-atenet --credential-provider='{"name":"k8s.io"}'
 ```
 
-| Flag | Purpose | Default |
-|---|---|---|
-| `--credential-provider-name` | `off`, or the name of the provider the gateway serves (the host of its `ate-secret://` URIs, e.g. `k8s.io`); a policy URI naming any other provider fails closed. `ATE_CREDENTIAL_PROVIDER_NAME` when the flag is absent | required |
-| `--credential-provider-address` | Where the gateway dials the provider; required for any provider but `k8s.io` | `k8s-credential-provider.ate-system.svc:50051` for `k8s.io` |
+`--credential-provider` (or `ATE_CREDENTIAL_PROVIDER` when the flag is
+absent) is a JSON object with these keys; any other key is an error:
 
-**2. The provider.** With `k8s.io` the install deploys the
-Kubernetes Secrets provider itself, from
-`manifests/egress-credential-injection/`, and waits for it alongside the
-gateway. Selecting any other provider, or `off`, removes a bundled provider an
-earlier install left behind; a provider of your own is yours to deploy, and
-until something serves the configured address every matching injection rule
-fails closed with 503.
+| Key | Value |
+|---|---|
+| `enabled` | Defaults to `true`. `false` turns injection off, and then no other key is allowed |
+| `name` | Required unless `enabled` is `false`. A DNS name: `k8s.io` for the bundled Kubernetes Secrets provider, or the name of a provider you deploy, which is the host of the `ate-secret://` URIs it serves, e.g. `vault.example.com` for `ate-secret://vault.example.com/...`. A policy URI naming any other provider fails closed |
+| `address` | The `host:port` the gateway dials the provider at. Required for a provider you deploy; optional with `k8s.io`, where it defaults to the bundled provider's Service, `k8s-credential-provider.ate-system.svc:50051` |
+
+For example:
+
+```bash
+--credential-provider='{"name":"k8s.io"}'
+--credential-provider='{"enabled":false}'
+--credential-provider='{"name":"vault.example.com","address":"vault-provider.ate-system.svc:50051"}'
+```
+
+**2. The provider.** With `k8s.io` the install deploys the Kubernetes Secrets
+provider itself, from `manifests/egress-credential-injection/`, and waits for
+it alongside the gateway. The install applies:
+
+* the provider's ServiceAccount, its Deployment and its Service in
+  `ate-system`;
+* a ClusterRole and ClusterRoleBinding that let it read Secrets in every
+  namespace;
+* the `k8s-credential-provider-namespace-policy` ConfigMap, only when it is
+  absent (see below); and
+* a NetworkPolicy that admits only the egress gateway's pods
+  (`app: atenet-egress`), on the provider's gRPC port. Every other connection
+  to the provider pods is dropped. The NetworkPolicy takes effect only on a
+  cluster whose network plugin enforces NetworkPolicy, such as GKE Dataplane
+  V2, which `tools/setup-gcp` turns on by default. Elsewhere the provider's
+  check of the gateway's client certificate is the only restriction.
+
+Selecting any other provider, or `{"enabled":false}`, removes a bundled
+provider an earlier install left behind, NetworkPolicy included. A provider of
+your own is yours to deploy, and until something serves the configured address
+every matching injection rule fails closed with 503.
 
 The provider enforces an atespace→namespace authorization policy, the
 `k8s-credential-provider-namespace-policy` ConfigMap in `ate-system`. The
@@ -174,10 +200,11 @@ all — see [egress-trust-bundle.md](egress-trust-bundle.md).
 
 ### Verify
 
-Confirm the provider is ready:
+Confirm the provider is ready and its NetworkPolicy is in place:
 
 ```bash
 kubectl -n ate-system rollout status deployment/k8s-credential-provider
+kubectl -n ate-system get networkpolicy k8s-credential-provider
 ```
 
 Then give an actor an `https` rule for `httpbin.org` that replaces a header,
@@ -212,8 +239,9 @@ The provider is a plugin: any gRPC service that implements
 can back injection. To bring your own — reading HashiCorp Vault, Google Secret
 Manager, or any other secret store — implement the API under your own provider
 class (the URI host, e.g. `ate-secret://vault.example.com/...`), then have a
-cluster admin point the gateway at it with `--credential-provider-name`
-(e.g. `vault.example.com`) and `--credential-provider-address`. A gateway currently fronts **one** provider:
+cluster admin point the gateway at it with
+`--credential-provider='{"name":"vault.example.com","address":"<host>:<port>"}'`.
+A gateway currently fronts **one** provider:
 a policy URI naming any other class fails closed rather than being sent to the
 wrong provider.
 
@@ -259,4 +287,4 @@ may only resolve Secrets in namespaces explicitly granted to it.
 * `cmd/credential-provider/kubernetes-secrets` — the reference provider.
 * `internal/e2e/suites/egresscredinject` — the e2e suite that proves the
   behavior table above. It runs only with `E2E_EGRESS_CREDINJECT=1`, against a
-  cluster installed with `--credential-provider-name=k8s.io`.
+  cluster installed with `--credential-provider='{"name":"k8s.io"}'`.

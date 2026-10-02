@@ -51,8 +51,7 @@ func loadEnv(t *testing.T) {
 		"ATE_API_POSTGRES_SCHEMA",
 		"ATE_API_POSTGRES_SERVER_CA_FILE",
 		"ATE_ATENET_DATAPLANE",
-		"ATE_CREDENTIAL_PROVIDER_ADDRESS",
-		"ATE_CREDENTIAL_PROVIDER_NAME",
+		"ATE_CREDENTIAL_PROVIDER",
 		"ATE_IMAGE_REPO",
 		"ATE_IMAGE_TAG",
 		"ATE_INSTALL_CLUSTER_SIZE",
@@ -546,11 +545,24 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{"cluster size", Options{ClusterSize: "size5"}},
 		{"extproc invalid format", Options{AdditionalEgressExtprocService: "extproc:50051"}},
 		{"extproc agentgateway", Options{Router: RouterAgentgateway, AdditionalEgressExtprocService: "ate-system/extproc:50051"}},
-		{"provider agentgateway", Options{Router: RouterAgentgateway, CredentialProviderName: K8sCredentialProviderName}},
-		{"provider with a scheme", Options{CredentialProviderName: "ate-secret://k8s.io"}},
-		{"provider with a path", Options{CredentialProviderName: "k8s.io/default"}},
-		{"provider with a query", Options{CredentialProviderName: "k8s.io?x=1"}},
-		{"other provider without an address", Options{CredentialProviderName: "vault.example.com"}},
+		{"provider not JSON", Options{CredentialProvider: "k8s.io"}},
+		{"provider as a JSON string", Options{CredentialProvider: `"off"`}},
+		{"provider null", Options{CredentialProvider: `null`}},
+		{"provider without a name", Options{CredentialProvider: `{"address":"vault.ate-system.svc:8200"}`}},
+		{"provider with an unknown key", Options{CredentialProvider: `{"name":"k8s.io","adress":"x:1"}`}},
+		{"provider with trailing data", Options{CredentialProvider: `{"enabled":false} {"name":"k8s.io"}`}},
+		{"provider agentgateway", Options{Router: RouterAgentgateway, CredentialProvider: `{"name":"k8s.io"}`}},
+		{"provider name with a scheme", Options{CredentialProvider: `{"name":"ate-secret://k8s.io"}`}},
+		{"provider name not lowercase", Options{CredentialProvider: `{"name":"Vault.example.com","address":"vault.ate-system.svc:8200"}`}},
+		{"provider name with a port", Options{CredentialProvider: `{"name":"k8s.io:443"}`}},
+		{"provider name with a path", Options{CredentialProvider: `{"name":"k8s.io/default"}`}},
+		{"provider name with a query", Options{CredentialProvider: `{"name":"k8s.io?x=1"}`}},
+		{"disabled with a name", Options{CredentialProvider: `{"enabled":false,"name":"k8s.io"}`}},
+		{"disabled with an address", Options{CredentialProvider: `{"enabled":false,"address":"stale.ate-system.svc:50051"}`}},
+		{"enabled without a name", Options{CredentialProvider: `{"enabled":true}`}},
+		{"kubernetes address without a port", Options{CredentialProvider: `{"name":"k8s.io","address":"secrets.ate-system.svc"}`}},
+		{"other provider without an address", Options{CredentialProvider: `{"name":"vault.example.com"}`}},
+		{"other provider address without a port", Options{CredentialProvider: `{"name":"vault.example.com","address":"vault.ate-system.svc"}`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := Load(tc.opts); err == nil {
@@ -561,7 +573,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 }
 
 // The provider selection is required only where the egress gateway is
-// rendered, so Load accepts an absent name and CredentialProvider refuses it.
+// rendered, so Load accepts an absent value and CredentialProvider refuses it.
 func TestCredentialProvider(t *testing.T) {
 	loadEnv(t)
 
@@ -573,33 +585,42 @@ func TestCredentialProvider(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "absent is an error", opts: Options{}, wantErr: true},
-		{name: "off", opts: Options{CredentialProviderName: CredentialProviderOff}},
-		{name: "off ignores a lingering address", opts: Options{CredentialProviderName: CredentialProviderOff, CredentialProviderAddress: "stale.ate-system.svc:50051"}},
-		{name: "off on agentgateway", opts: Options{Router: RouterAgentgateway, CredentialProviderName: CredentialProviderOff}},
+		{name: "disabled", opts: Options{CredentialProvider: `{"enabled":false}`}},
+		{name: "disabled on agentgateway", opts: Options{Router: RouterAgentgateway, CredentialProvider: `{"enabled":false}`}},
 		{
-			name: "kubernetes defaults its address",
-			opts: Options{CredentialProviderName: K8sCredentialProviderName},
+			name: "enabled true names a provider",
+			opts: Options{CredentialProvider: `{"enabled":true,"name":"k8s.io"}`},
+			want: CredentialProvider{Name: K8sCredentialProviderName, Address: K8sCredentialProviderAddress},
+		},
+		{
+			name: "kubernetes gets the bundled address",
+			opts: Options{CredentialProvider: `{"name":"k8s.io"}`},
 			want: CredentialProvider{Name: K8sCredentialProviderName, Address: K8sCredentialProviderAddress},
 		},
 		{
 			name: "kubernetes keeps a given address",
-			opts: Options{CredentialProviderName: K8sCredentialProviderName, CredentialProviderAddress: "secrets.ate-system.svc:443"},
+			opts: Options{CredentialProvider: `{"name":"k8s.io","address":"secrets.ate-system.svc:443"}`},
 			want: CredentialProvider{Name: K8sCredentialProviderName, Address: "secrets.ate-system.svc:443"},
 		},
 		{
 			name: "another provider",
-			opts: Options{CredentialProviderName: "vault.example.com", CredentialProviderAddress: "vault.ate-system.svc:50051"},
+			opts: Options{CredentialProvider: `{"name":"vault.example.com","address":"vault.ate-system.svc:50051"}`},
 			want: CredentialProvider{Name: "vault.example.com", Address: "vault.ate-system.svc:50051"},
 		},
 		{
+			name: "whitespace is allowed",
+			opts: Options{CredentialProvider: ` { "name" : "k8s.io" } `},
+			want: CredentialProvider{Name: K8sCredentialProviderName, Address: K8sCredentialProviderAddress},
+		},
+		{
 			name: "the environment selects too",
-			env:  map[string]string{"ATE_CREDENTIAL_PROVIDER_NAME": K8sCredentialProviderName},
+			env:  map[string]string{"ATE_CREDENTIAL_PROVIDER": `{"name":"k8s.io"}`},
 			want: CredentialProvider{Name: K8sCredentialProviderName, Address: K8sCredentialProviderAddress},
 		},
 		{
 			name: "the flag overrides the environment",
-			opts: Options{CredentialProviderName: CredentialProviderOff},
-			env:  map[string]string{"ATE_CREDENTIAL_PROVIDER_NAME": K8sCredentialProviderName, "ATE_CREDENTIAL_PROVIDER_ADDRESS": "stale:1"},
+			opts: Options{CredentialProvider: `{"enabled":false}`},
+			env:  map[string]string{"ATE_CREDENTIAL_PROVIDER": `{"name":"vault.example.com","address":"vault.ate-system.svc:50051"}`},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

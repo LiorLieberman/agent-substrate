@@ -135,12 +135,8 @@ func (e *Env) atenetEgressManifestPath() string {
 }
 
 // renderAtenetEgressManifest produces the atenet egress manifest.
-func (e *Env) renderAtenetEgressManifest(ctx context.Context) ([]byte, error) {
+func (e *Env) renderAtenetEgressManifest(ctx context.Context, provider config.CredentialProvider) ([]byte, error) {
 	general := e.Cfg.AdditionalEgressExtprocService != ""
-	provider, err := e.Cfg.CredentialProvider()
-	if err != nil {
-		return nil, err
-	}
 
 	if e.Cfg.Router == config.RouterAgentgateway {
 		if general {
@@ -360,8 +356,8 @@ func emitAdditionalEgressExtprocCluster(address, port, serverName string) string
               port_value: %s`, additionalEgressExtprocCluster, serverName, serverName, additionalEgressExtprocCluster, address, port)
 }
 
-func (e *Env) applyAtenetEgress(ctx context.Context) error {
-	manifests, err := e.renderAtenetEgressManifest(ctx)
+func (e *Env) applyAtenetEgress(ctx context.Context, provider config.CredentialProvider) error {
+	manifests, err := e.renderAtenetEgressManifest(ctx, provider)
 	if err != nil {
 		return err
 	}
@@ -375,8 +371,7 @@ func (e *Env) applyAtenetEgress(ctx context.Context) error {
 		return err
 	}
 
-	// The render above has already rejected a missing provider name.
-	if running && (e.Cfg.AdditionalEgressExtprocService != "" || e.Cfg.CredentialProviderName != config.CredentialProviderOff) {
+	if running && (e.Cfg.AdditionalEgressExtprocService != "" || provider.Enabled()) {
 		if err := e.Kube.RolloutRestartDeployment(ctx, e.Namespace(), "atenet-egress", time.Now()); err != nil {
 			return err
 		}

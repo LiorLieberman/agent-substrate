@@ -104,12 +104,11 @@ func init() {
 			"ate.dev/workloadType=ate-control-plane:NoSchedule, and a one-node pool labeled and tainted "+
 			"ate.dev/workloadType=ate-postgres:NoSchedule for postgres alone")
 	f.StringVar(&opts.AdditionalEgressExtprocService, "experimental-additional-egress-extproc-service", "", "Run an additional ext_proc authorization filter served by NS/SVC:PORT (requires --atenet-dataplane=envoy)")
-	f.StringVar(&opts.CredentialProviderName, "credential-provider-name", "",
-		"Credential provider the egress gateway injects credentials from; required by deploy ate-system and deploy atenet. "+
-			config.CredentialProviderOff+" turns injection off, "+config.K8sCredentialProviderName+" deploys and uses the bundled Kubernetes Secrets provider, "+
-			"any other name is a provider you deploy yourself (requires --atenet-dataplane=envoy; defaults to ATE_CREDENTIAL_PROVIDER_NAME)")
-	f.StringVar(&opts.CredentialProviderAddress, "credential-provider-address", "",
-		"host:port the egress gateway dials the credential provider at; required for any provider but the bundled one (default "+config.K8sCredentialProviderAddress+")")
+	f.StringVar(&opts.CredentialProvider, "credential-provider", "",
+		"Credential provider the egress gateway injects credentials from, as JSON; required by deploy ate-system and deploy atenet (defaults to ATE_CREDENTIAL_PROVIDER). "+
+			`{"name":"k8s.io"} deploys the bundled Kubernetes Secrets provider with a NetworkPolicy that admits only the egress gateway; `+
+			`{"enabled":false} turns injection off; `+
+			`{"name":"<provider>","address":"<host>:<port>"} uses a provider you deploy yourself. A provider requires --atenet-dataplane=envoy`)
 	f.StringVar(&opts.OtlpEndpoint, "otlp-endpoint", "", "Send control plane telemetry to this OTLP collector instead of the cluster default (defaults to ATE_OTLP_ENDPOINT)")
 	f.BoolVar(&opts.NoDevEnv, "no-dev-env", false, "Do not source .ate-dev-env.sh")
 
