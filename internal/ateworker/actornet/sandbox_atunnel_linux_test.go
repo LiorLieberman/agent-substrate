@@ -45,16 +45,16 @@ func TestSandboxEgressReachesAtunnelOnAnyPort(t *testing.T) {
 	}
 	t.Cleanup(func() { actornet.CleanupSandboxNetwork(n) })
 
-	listeners, err := netns.Listen(ctx, n.GatewayNetNS, []uint16{egressPort})
+	listener, err := netns.Listen(ctx, n.GatewayNetNS, egressPort)
 	if err != nil {
 		t.Fatalf("netns.Listen: %v", err)
 	}
-	defer listeners[0].Close()
+	defer listener.Close()
 
 	type capture struct{ destination, payload string }
 	got := make(chan capture, 1)
 	accept := func() {
-		c, err := listeners[0].Accept()
+		c, err := listener.Accept()
 		if err != nil {
 			return
 		}
@@ -112,12 +112,12 @@ func TestSandboxLinkLocalDoesNotReachAtunnel(t *testing.T) {
 	}
 	t.Cleanup(func() { actornet.CleanupSandboxNetwork(n) })
 
-	listeners, err := netns.Listen(ctx, n.GatewayNetNS, []uint16{egressPort})
+	l, err := netns.Listen(ctx, n.GatewayNetNS, egressPort)
 	if err != nil {
 		t.Fatalf("netns.Listen: %v", err)
 	}
-	defer listeners[0].Close()
-	listener := listeners[0].(*net.TCPListener)
+	defer l.Close()
+	listener := l.(*net.TCPListener)
 
 	if err := listener.SetDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
 		t.Fatal(err)

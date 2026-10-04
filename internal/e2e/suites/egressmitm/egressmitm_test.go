@@ -74,16 +74,6 @@ func TestActorEgressMITMTrust(t *testing.T) {
 	ctx := context.Background()
 	clients := e2e.GetClients()
 
-	// Ensure, never replace: the gateway signs with the pool mounted into its
-	// pod, and kubelet propagates Secret updates into that mount on
-	// its own schedule — replacing the pool here would race the propagation
-	// and flake the handshake. The install created the pool; we
-	// only wait for the reconciler-derived bundle so actor start can resolve
-	// the projection. (DeployProbe ensures too; this makes the dependency
-	// explicit and fails with the clearer message when the reconciler is
-	// missing.)
-	e2e.EnsureEgressTrustBundle(t, ctx, clients)
-
 	// One pod answers http and https for the intercepted name; passthrough is
 	// decided by name, so it needs an origin of its own.
 	mitm := e2e.DeployServerPod(t, ctx, originSpec("mitm-origin"))
@@ -92,11 +82,14 @@ func TestActorEgressMITMTrust(t *testing.T) {
 	passthrough := e2e.DeployServerPod(t, ctx, passthroughSpec)
 	originRoots := "ca=" + url.QueryEscape(e2e.ServiceDNSTrustBundle(t, ctx, clients))
 
+	// WithTrustBundle ensures the CA pool but never replaces it: the gateway
+	// signs with the pool mounted into its pod, and replacing it here would
+	// race kubelet's propagation of the new one and flake the handshake.
 	probeNamespace, _ = e2e.DeployProbe(t, env["BUCKET_NAME"], "egressmitm", e2e.WithTrustBundle(), e2e.WithSystemRoots())
 
 	const id = "probe-mitm"
 	createAndResumeActor(t, ctx, clients, id, mitm, passthrough)
-	waitForActorState(t, ctx, clients, id, ateapipb.ActorState_ACTOR_STATE_RUNNING)
+	e2e.WaitForActorState(t, ctx, clients, &ateapipb.ObjectRef{Atespace: probeNamespace, Name: id}, ateapipb.ActorState_ACTOR_STATE_RUNNING, time.Minute)
 
 	rc, err := e2e.NewRouterClient(ctx)
 	if err != nil {
@@ -338,7 +331,6 @@ func holdsCertificate(t *testing.T, bundle, commonName string) bool {
 // createAndResumeActor mirrors the identity suite's self-healing actor
 // lifecycle (actor records outlive the fixture namespace); DeployProbe has
 // already waited for the template's golden snapshot.
-
 func createAndResumeActor(t *testing.T, ctx context.Context, clients *e2e.Clients, id string, mitm, passthrough e2e.Server) {
 	t.Helper()
 	ref := &ateapipb.ObjectRef{Atespace: probeNamespace, Name: id}
@@ -369,19 +361,4 @@ func createAndResumeActor(t *testing.T, ctx context.Context, clients *e2e.Client
 	if _, err := clients.SubstrateAPI.ResumeActor(ctx, &ateapipb.ResumeActorRequest{Actor: ref}); err != nil {
 		t.Fatalf("ResumeActor %q: %v", id, err)
 	}
-}
-
-func waitForActorState(t *testing.T, ctx context.Context, clients *e2e.Clients, actorName string, want ateapipb.ActorState) {
-	t.Helper()
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := clients.SubstrateAPI.GetActor(ctx, &ateapipb.GetActorRequest{
-			Actor: &ateapipb.ObjectRef{Atespace: probeNamespace, Name: actorName},
-		})
-		if err == nil && resp.GetStatus().GetState() == want {
-			return
-		}
-		time.Sleep(1 * time.Second)
-	}
-	t.Fatalf("timed out waiting for actor %q to reach state %v", actorName, want)
 }

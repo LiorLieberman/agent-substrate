@@ -48,14 +48,7 @@ func upstreamConnectSnapshot(t *testing.T) *cachev3.Snapshot {
 	server.SetConnectPorts(8081, 0)
 	server.SetUpstreamTls("/run/bundle.pem", "/run/trust.pem")
 	server.SetUpstreamConnect(true)
-	if err := server.UpdateSnapshot(); err != nil {
-		t.Fatalf("UpdateSnapshot failed: %v", err)
-	}
-	res, err := server.snapshot.GetSnapshot(NodeID)
-	if err != nil {
-		t.Fatalf("Failed to get snapshot: %v", err)
-	}
-	snap := res.(*cachev3.Snapshot)
+	snap := publishedSnapshot(t, server)
 	if err := snap.Consistent(); err != nil {
 		t.Fatalf("Integrity check failed on snapshot: %v", err)
 	}

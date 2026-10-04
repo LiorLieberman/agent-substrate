@@ -76,11 +76,8 @@ type Config struct {
 
 // Server is an HTTPS reverse proxy for the worker's active actors.
 type Server struct {
-	credentialBundlePath string
-	tlsConfig            *tls.Config
-	upstream             *url.URL
-	// Overridable by tests to avoid dialing real sandboxes.
-	newProxy func(DialFunc) *httputil.ReverseProxy
+	tlsConfig *tls.Config
+	upstream  *url.URL
 
 	mu sync.Mutex
 	// Keyed by the request's actor identity.
@@ -128,12 +125,8 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		credentialBundlePath: cfg.CredentialBundlePath,
-		upstream:             cfg.Upstream,
-		active:               map[resources.ActorRef]*activation{},
-	}
-	s.newProxy = func(dial DialFunc) *httputil.ReverseProxy {
-		return newActorProxy(cfg.Upstream, dial)
+		upstream: cfg.Upstream,
+		active:   map[resources.ActorRef]*activation{},
 	}
 	verifyConnection := func(cs tls.ConnectionState) error {
 		if len(cs.PeerCertificates) == 0 {
@@ -163,7 +156,7 @@ func NewServer(cfg Config) (*Server, error) {
 				MinVersion: tls.VersionTLS12,
 				NextProtos: []string{"h2", "http/1.1"},
 				GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-					return loadCredentialBundle(s.credentialBundlePath)
+					return loadCredentialBundle(cfg.CredentialBundlePath)
 				},
 				ClientAuth:       tls.RequireAndVerifyClientCert,
 				ClientCAs:        clientCAs,
@@ -305,16 +298,9 @@ func (s *Server) serve(ctx context.Context, lis net.Listener, handler http.Handl
 		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = httpServer.Close()
-		case <-done:
-		}
-	}()
+	stop := context.AfterFunc(ctx, func() { _ = httpServer.Close() })
 	err := httpServer.ServeTLS(lis, "", "")
-	close(done)
+	stop()
 	if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
 		return nil
 	}
@@ -470,7 +456,7 @@ func (s *Server) Activate(atespace, actorName, actorUID string, dial DialFunc) e
 		ctx:    ctx,
 		cancel: cancel,
 		dial:   dial,
-		proxy:  s.newProxy(dial),
+		proxy:  newActorProxy(s.upstream, dial),
 	}
 	return nil
 }
