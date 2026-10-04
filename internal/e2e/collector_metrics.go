@@ -127,8 +127,9 @@ func MissingPlatformMetrics(scrape string, prefixes []string) []string {
 	return missing
 }
 
-// Port-forward each ready atenet-egress pod's Envoy admin port and read its
-// stats/prometheus endpoint, returning the concatenated Prometheus exposition text.
+// ScrapeEgressEnvoyMetrics port-forwards each ready atenet-egress pod's Envoy
+// admin port and reads its stats/prometheus endpoint, returning the
+// concatenated Prometheus exposition text.
 func ScrapeEgressEnvoyMetrics(ctx context.Context) (string, error) {
 	config, clientset, err := kubeClient()
 	if err != nil {
@@ -192,7 +193,7 @@ func LifecycleEventCounts(scrape string) map[string]float64 {
 		if name != LifecycleEventMetric && !strings.HasPrefix(name, LifecycleEventMetric+"_") {
 			continue
 		}
-		state := promLabelValue(line, "ate_actor_state")
+		state := PromLabelValue(line, "ate_actor_state")
 		if state == "" {
 			continue
 		}
@@ -240,15 +241,16 @@ func TargetInfoLabel(scrape, service, label string) string {
 		if metricNameFromLine(line) != "target_info" || !strings.Contains(line, `job="`+service+`"`) {
 			continue
 		}
-		if v := promLabelValue(line, label); v != "" {
+		if v := PromLabelValue(line, label); v != "" {
 			return v
 		}
 	}
 	return ""
 }
 
-// promLabelValue reads one label off an exposition line.
-func promLabelValue(line, label string) string {
+// PromLabelValue reads one label off a Prometheus exposition line, or "" when
+// the line does not carry it.
+func PromLabelValue(line, label string) string {
 	key := label + `="`
 	i := strings.Index(line, key)
 	if i < 0 {

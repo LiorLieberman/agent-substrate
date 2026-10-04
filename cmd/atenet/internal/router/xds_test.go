@@ -167,6 +167,12 @@ func publishedSnapshot(t *testing.T, server *XdsServer) *cachev3.Snapshot {
 	if err := server.UpdateSnapshot(); err != nil {
 		t.Fatalf("UpdateSnapshot failed: %v", err)
 	}
+	return currentSnapshot(t, server)
+}
+
+// currentSnapshot returns the snapshot server last published.
+func currentSnapshot(t *testing.T, server *XdsServer) *cachev3.Snapshot {
+	t.Helper()
 	res, err := server.snapshot.GetSnapshot(NodeID)
 	if err != nil {
 		t.Fatalf("Failed to get snapshot: %v", err)
@@ -824,14 +830,6 @@ func TestUpstreamTransportSocket_DeliversCertsOverSds(t *testing.T) {
 // TestXdsServer_WorkerIdentityFilter checks every ext_proc HCM requires the
 // routed worker's identity from atunnel, on both the HTTPS and CONNECT paths.
 func TestXdsServer_WorkerIdentityFilter(t *testing.T) {
-	hcmFilters := func(t *testing.T, l *listenerv3.Listener) []*hcmv3.HttpFilter {
-		t.Helper()
-		hcm := &hcmv3.HttpConnectionManager{}
-		if err := l.GetFilterChains()[0].GetFilters()[0].GetTypedConfig().UnmarshalTo(hcm); err != nil {
-			t.Fatalf("listener %s: unmarshal HCM: %v", l.GetName(), err)
-		}
-		return hcm.GetHttpFilters()
-	}
 	setsUpstreamSANs := func(t *testing.T, f *hcmv3.HttpFilter) *setfilterstatecommonv3.FilterStateValue {
 		t.Helper()
 		if f.GetName() != "envoy.filters.http.set_filter_state" {
@@ -857,7 +855,7 @@ func TestXdsServer_WorkerIdentityFilter(t *testing.T) {
 		server.SetUpstreamConnect(upstreamConnect)
 		listeners := snapshotListeners(t, server)
 		for _, name := range []string{IngressHTTPListener, MainInternalName} {
-			filters := hcmFilters(t, listeners[name])
+			filters := listenerHCM(t, listeners[name]).GetHttpFilters()
 			n := len(filters)
 			if n < 2 || filters[n-1].GetName() != "envoy.filters.http.router" {
 				t.Fatalf("upstreamConnect=%v listener %s: filters do not end with the router", upstreamConnect, name)
@@ -886,7 +884,7 @@ func TestXdsServer_WorkerIdentityFilter(t *testing.T) {
 	server := NewXdsServer(18000)
 	server.SetConfig(8085, 50053, "127.0.0.1")
 	server.SetUpstreamTls("/run/bundle.pem", "")
-	for _, f := range hcmFilters(t, snapshotListeners(t, server)[IngressHTTPListener]) {
+	for _, f := range listenerHCM(t, snapshotListeners(t, server)[IngressHTTPListener]).GetHttpFilters() {
 		if setsUpstreamSANs(t, f) != nil {
 			t.Error("upstream SANs set although atunnel's certificate is not verified")
 		}
@@ -1395,15 +1393,6 @@ func TestSnapshotVersionsUniqueAcrossRestarts(t *testing.T) {
 
 // downstreamTLS extracts the DownstreamTlsContext from a listener's first
 // filter chain.
-func downstreamTLS(t *testing.T, raw any) *tlsv3.DownstreamTlsContext {
-	t.Helper()
-	l := raw.(*listenerv3.Listener)
-	dtc := &tlsv3.DownstreamTlsContext{}
-	if err := l.GetFilterChains()[0].GetTransportSocket().GetTypedConfig().UnmarshalTo(dtc); err != nil {
-		t.Fatalf("Failed to unmarshal DownstreamTlsContext: %v", err)
-	}
-	return dtc
-}
 
 // TestXdsServer_ALPN pins the per-listener ALPN contract. The HTTPS ingress
 // listener always offers h2 before http/1.1: gRPC over TLS requires a
@@ -1421,27 +1410,22 @@ func TestXdsServer_ALPN(t *testing.T) {
 	server.SetConfig(8085, 50053, "127.0.0.1")
 	server.SetTlsConfig(8443, certPath)
 	server.SetConnectPorts(0, 8444)
-	listeners := publishedSnapshot(t, server).GetResources(resourcev3.ListenerType)
+	listeners := snapshotListeners(t, server)
 
 	// h2 first: ALPN is server-preference, and a client that can speak HTTP/2
 	// must land on it rather than on http/1.1.
-	alpn := downstreamTLS(t, listeners[IngressHTTPSListener]).GetCommonTlsContext().GetAlpnProtocols()
+	alpn := downstreamTlsContext(t, listeners[IngressHTTPSListener]).GetCommonTlsContext().GetAlpnProtocols()
 	if len(alpn) != 2 || alpn[0] != "h2" || alpn[1] != "http/1.1" {
 		t.Errorf("HTTPS listener ALPN = %v, want [h2 http/1.1]", alpn)
 	}
-	if alpn := downstreamTLS(t, listeners["connect_terminate_tls"]).GetCommonTlsContext().GetAlpnProtocols(); len(alpn) != 0 {
+	if alpn := downstreamTlsContext(t, listeners["connect_terminate_tls"]).GetCommonTlsContext().GetAlpnProtocols(); len(alpn) != 0 {
 		t.Errorf("CONNECT-TLS listener ALPN = %v, want none", alpn)
 	}
 
 	// The offer is only half the contract: the HCM must honor whatever ALPN
 	// negotiated. An explicit HTTP1 codec here would turn every h2 client
 	// into a connection error while the ALPN list still looked right.
-	https := listeners[IngressHTTPSListener].(*listenerv3.Listener)
-	hcm := &hcmv3.HttpConnectionManager{}
-	if err := https.GetFilterChains()[0].GetFilters()[0].GetTypedConfig().UnmarshalTo(hcm); err != nil {
-		t.Fatalf("Failed to unmarshal the HTTPS listener's HCM config: %v", err)
-	}
-	if hcm.GetCodecType() != hcmv3.HttpConnectionManager_AUTO {
+	if hcm := listenerHCM(t, listeners[IngressHTTPSListener]); hcm.GetCodecType() != hcmv3.HttpConnectionManager_AUTO {
 		t.Errorf("HTTPS listener HCM codec = %v, want AUTO so the negotiated protocol is honored", hcm.GetCodecType())
 	}
 }
@@ -1462,6 +1446,17 @@ func snapshotListeners(t *testing.T, server *XdsServer) map[string]*listenerv3.L
 
 // downstreamTlsContext returns the DownstreamTlsContext of a listener's only
 // filter chain.
+// listenerHCM unmarshals the HTTP connection manager that is l's first
+// chain's first filter.
+func listenerHCM(t *testing.T, l *listenerv3.Listener) *hcmv3.HttpConnectionManager {
+	t.Helper()
+	hcm := &hcmv3.HttpConnectionManager{}
+	if err := l.GetFilterChains()[0].GetFilters()[0].GetTypedConfig().UnmarshalTo(hcm); err != nil {
+		t.Fatalf("listener %s: unmarshal HCM: %v", l.GetName(), err)
+	}
+	return hcm
+}
+
 func downstreamTlsContext(t *testing.T, l *listenerv3.Listener) *tlsv3.DownstreamTlsContext {
 	t.Helper()
 	chains := l.GetFilterChains()

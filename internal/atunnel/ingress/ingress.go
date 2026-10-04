@@ -53,16 +53,6 @@ const (
 	TargetPortHeader = "X-Ate-Target-Port"
 )
 
-// ParsePort parses s as a TCP port number, returning ok=false for anything
-// outside the valid 1-65535 range (including non-numeric input).
-func ParsePort(s string) (port int, ok bool) {
-	p, err := strconv.Atoi(s)
-	if err != nil || p < 1 || p > 65535 {
-		return 0, false
-	}
-	return p, true
-}
-
 // DialFunc dials a network address. It matches net.Dialer.DialContext.
 type DialFunc func(ctx context.Context, network, address string) (net.Conn, error)
 
@@ -179,7 +169,7 @@ func newActorProxy(upstream *url.URL, dial DialFunc) *httputil.ReverseProxy {
 			port := pr.In.Header.Get(TargetPortHeader)
 			pr.Out.Header.Del(TargetPortHeader)
 			pr.Out.Header.Del(atenet.TargetActorHeader)
-			if p, ok := ParsePort(port); ok {
+			if p, ok := atenet.ParsePort(port); ok {
 				pr.Out.URL.Host = net.JoinHostPort(upstream.Hostname(), strconv.Itoa(p))
 			}
 			pr.SetXForwarded()
@@ -275,7 +265,7 @@ func loadCredentialBundle(path string) (*tls.Certificate, error) {
 
 // Serve serves HTTPS on lis until ctx is canceled or the server fails.
 func (s *Server) Serve(ctx context.Context, lis net.Listener) error {
-	return s.serve(ctx, lis, s, s.tlsConfig)
+	return s.serve(ctx, lis, s)
 }
 
 // ServeConnect serves the mTLS CONNECT endpoint. CONNECT is deliberately on a
@@ -289,13 +279,13 @@ func (s *Server) Serve(ctx context.Context, lis net.Listener) error {
 // decisions move to the router's route config, leaving atunnel with no
 // request parsing at all.
 func (s *Server) ServeConnect(ctx context.Context, lis net.Listener) error {
-	return s.serve(ctx, lis, http.HandlerFunc(s.serveConnectHTTP), s.tlsConfig)
+	return s.serve(ctx, lis, http.HandlerFunc(s.serveConnectHTTP))
 }
 
-func (s *Server) serve(ctx context.Context, lis net.Listener, handler http.Handler, tlsConfig *tls.Config) error {
+func (s *Server) serve(ctx context.Context, lis net.Listener, handler http.Handler) error {
 	httpServer := &http.Server{
 		Handler:           handler,
-		TLSConfig:         tlsConfig,
+		TLSConfig:         s.tlsConfig,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	stop := context.AfterFunc(ctx, func() { _ = httpServer.Close() })
@@ -328,7 +318,7 @@ func (s *Server) serveConnectHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "CONNECT authority must include a port", http.StatusBadRequest)
 		return
 	}
-	if _, ok := ParsePort(port); !ok {
+	if _, ok := atenet.ParsePort(port); !ok {
 		slog.DebugContext(r.Context(), "atunnel CONNECT rejected: invalid port", slog.Any("actor", active.ref), slog.String("authority", r.Host))
 		http.Error(w, "invalid CONNECT port", http.StatusBadRequest)
 		return

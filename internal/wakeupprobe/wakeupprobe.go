@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package wakeupprobe polls a container's HTTP wakeup endpoint from inside an
+// Package wakeupprobe polls a container's HTTP wakeup endpoint from inside a
 // worker. The intent is to detect the moment a container's HTTP server
 // starts accepting connections with single-millisecond latency: while the
 // server is still booting the kernel returns RST in microseconds, so a
@@ -156,8 +156,7 @@ func tryOnce(ctx context.Context, client *http.Client, url string) (bool, error)
 	return true, nil
 }
 
-// URL builds the probe endpoint URL. Exported so callers and tests can
-// validate a probe spec before kicking off a Wait.
+// URL builds the probe endpoint URL.
 func URL(probe *ateworkerpb.WakeupProbe, actorIP string) (string, error) {
 	hg := probe.GetHttpGet()
 	if hg == nil {

@@ -92,9 +92,7 @@ func TestSandboxSessionDialerConcurrentClose(t *testing.T) {
 	start := make(chan struct{})
 	var workers sync.WaitGroup
 	for range 32 {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			<-start
 			for range 32 {
 				conn, err := dial(context.Background(), "udp", "127.0.0.1:9")
@@ -106,7 +104,7 @@ func TestSandboxSessionDialerConcurrentClose(t *testing.T) {
 				}
 				_ = conn.Close()
 			}
-		}()
+		})
 	}
 	close(start)
 	if err := session.Close(context.Background()); err != nil {

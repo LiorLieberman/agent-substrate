@@ -336,12 +336,7 @@ func createAndResumeActor(t *testing.T, ctx context.Context, clients *e2e.Client
 	ref := &ateapipb.ObjectRef{Atespace: probeNamespace, Name: id}
 	_, _ = clients.SubstrateAPI.SuspendActor(ctx, &ateapipb.SuspendActorRequest{Actor: ref})
 	_, _ = clients.SubstrateAPI.DeleteActor(ctx, &ateapipb.DeleteActorRequest{Actor: ref})
-	if _, err := clients.SubstrateAPI.CreateActor(ctx, &ateapipb.CreateActorRequest{Actor: &ateapipb.Actor{
-		Metadata:      &ateapipb.ResourceMetadata{Atespace: probeNamespace, Name: id},
-		ActorTemplate: &ateapipb.ObjectRef{Atespace: probeNamespace, Name: probeTemplate},
-	}}); err != nil {
-		t.Fatalf("CreateActor %q: %v", id, err)
-	}
+	e2e.CreateActor(t, ctx, clients, ref, &ateapipb.ObjectRef{Atespace: probeNamespace, Name: probeTemplate})
 	// The gateway refuses every tunnel for an actor without a policy. Naming
 	// only the origins also lets the same actor show a denial. The
 	// passthrough origin's fully qualified alias is allowed on 8443 only,
@@ -352,12 +347,6 @@ func createAndResumeActor(t *testing.T, ctx context.Context, clients *e2e.Client
 		e2e.EgressAllowPassthrough(passthrough.SvcName()),
 		e2e.EgressAllowPassthroughOnPorts([]int32{8443}, passthrough.SvcName()+".cluster.local"),
 	)
-	t.Cleanup(func() {
-		_, _ = clients.SubstrateAPI.SuspendActor(ctx, &ateapipb.SuspendActorRequest{Actor: ref})
-		if _, err := clients.SubstrateAPI.DeleteActor(ctx, &ateapipb.DeleteActorRequest{Actor: ref}); err != nil {
-			t.Logf("cleanup: DeleteActor %q failed, actor leaked (remove with: kubectl ate delete actor %s -a %s): %v", id, id, probeNamespace, err)
-		}
-	})
 	if _, err := clients.SubstrateAPI.ResumeActor(ctx, &ateapipb.ResumeActorRequest{Actor: ref}); err != nil {
 		t.Fatalf("ResumeActor %q: %v", id, err)
 	}

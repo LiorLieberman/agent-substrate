@@ -42,7 +42,7 @@ const (
 	ConnectAuthorityFilterStateAttribute = "filter_state['" + ConnectAuthorityFilterStateKey + "']"
 
 	// ActorIdentityFilterStateKey holds the actor's SPIFFE ID
-	// (resources.ActorSPIFFEID), read from the peer certificate's URI SAN.
+	// (resources.WorkerForActorSPIFFEID), read from the peer certificate's URI SAN.
 	// The outer CONNECT chain sets it from %DOWNSTREAM_PEER_URI_SAN% and
 	// shares it with the inner legs, which have no certificate of their own.
 	ActorIdentityFilterStateKey = "dev.ate.actor.identity"

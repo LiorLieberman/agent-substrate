@@ -14,8 +14,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// These integration tests use an external package so that actornet's own test
-// binary does not depend on atunnel.
 package actornet_test
 
 import (

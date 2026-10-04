@@ -98,15 +98,11 @@ func TestStatuszEndpoint(t *testing.T) {
 		Duration:  time.Millisecond * 10,
 	})
 
-	statusReady := make(chan struct{})
 	go func() {
-		close(statusReady)
 		if runErr := srv.Run(ctx); runErr != nil && !strings.Contains(runErr.Error(), "context canceled") {
 			t.Logf("status server Run returned unexpected error: %v", runErr)
 		}
 	}()
-
-	<-statusReady
 
 	statuszUrl := fmt.Sprintf("http://127.0.0.1:%d/statusz", httpPort)
 

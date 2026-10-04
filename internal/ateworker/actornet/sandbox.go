@@ -395,11 +395,11 @@ func serveSandboxEgress(ctx context.Context, e egressServer, actorUID string, ns
 type SandboxSession struct {
 	Network *SandboxNetwork
 
-	mu      sync.Mutex
-	dns     *dns.Server
-	sockets []io.Closer
-	// serving counts the egress goroutines, so Close can wait for them rather
-	// than just closing their sockets. dns.Server waits for its own.
+	mu     sync.Mutex
+	dns    *dns.Server
+	egress io.Closer
+	// serving counts the egress goroutine, so Close can wait for it rather
+	// than just closing its listener. dns.Server waits for its own.
 	serving sync.WaitGroup
 }
 
@@ -432,7 +432,7 @@ func ServeSandbox(ctx context.Context, cfg SandboxNetworkConfig, egress egressSe
 		if err != nil {
 			return nil, err
 		}
-		session.sockets = append(session.sockets, listener)
+		session.egress = listener
 		// Started here rather than inside the helper so the session owns it
 		// and Close can report when it has stopped.
 		session.serving.Go(serveEgress)
@@ -446,13 +446,13 @@ func ServeSandbox(ctx context.Context, cfg SandboxNetworkConfig, egress egressSe
 // Idempotent, and every step's error is returned.
 func (s *SandboxSession) Close(ctx context.Context) error {
 	s.mu.Lock()
-	dnsServer, sockets, network := s.dns, s.sockets, s.Network
-	s.dns, s.sockets, s.Network = nil, nil, nil
+	dnsServer, egress, network := s.dns, s.egress, s.Network
+	s.dns, s.egress, s.Network = nil, nil, nil
 	s.mu.Unlock()
 
 	var errs error
-	for _, c := range sockets {
-		if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+	if egress != nil {
+		if err := egress.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			errs = errors.Join(errs, err)
 		}
 	}

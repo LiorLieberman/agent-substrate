@@ -297,7 +297,7 @@ func TestMITMLegDecidesSNIThenAuthority(t *testing.T) {
 
 func TestRequestLegServesBothDecryptedChains(t *testing.T) {
 	h := policyHandler(combined(httpPolicy("api.example.com"), httpsPolicy("api.example.com")))
-	for _, leg := range []string{extproc.EgressCleartextFilterChainName, extproc.EgressTLSMITMFilterChainName} {
+	for _, leg := range requestLegs {
 		res, err := h.HandleRequestHeaders(context.Background(), innerMetadata(leg, "POST", "api.example.com", nil))
 		wantDial(t, res, err, extproc.EgressDialName)
 		_, err = h.HandleRequestHeaders(context.Background(), innerMetadata(leg, "POST", "other.example", nil))
@@ -330,7 +330,7 @@ func TestRequestLegPicksRulesByLeg(t *testing.T) {
 
 func TestRequestLegDeniesHTTP1WebSocketUpgrade(t *testing.T) {
 	h := policyHandler(allowAllPolicy())
-	for _, leg := range []string{extproc.EgressCleartextFilterChainName, extproc.EgressTLSMITMFilterChainName} {
+	for _, leg := range requestLegs {
 		t.Run(leg, func(t *testing.T) {
 			md := innerMetadata(leg, "GET", "api.example.com", nil)
 			md.Headers["connection"] = "keep-alive, UpGrAdE"

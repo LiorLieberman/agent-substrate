@@ -95,13 +95,12 @@ the request legs match `ports` against it; a dataplane that does not share it
 gets no port enforcement.
 
 The CONNECT leg decides per connection: it refuses an actor without a policy
-with rules, and for the rest computes hash of the policy SNI's rules for the
-destination port, stores policy in the thread local store using hash as the
-key and hands the inner listener the port the actor dialed, as
-`envoy.upstream.dynamic_port` and the hash of the policy' as
-`dev.ate.policy.egress.hash`. At the ClientHello the egress-policy module
-reads the hash, and fetches egress policy from the thrad local store,
-applies SNI rules and picks the chain: `egress_tls_mitm` under an `https`
+with rules. For the rest it hashes the policy's SNI rules for the destination
+port, stores them in the thread-local store under that hash, and hands the
+inner listener the port the actor dialed, as `envoy.upstream.dynamic_port`,
+and the hash, as `dev.ate.policy.egress.hash`. At the ClientHello the
+egress-policy module reads the hash, fetches the rules from the thread-local
+store, and picks the chain: `egress_tls_mitm` under an `https`
 rule, `egress_passthrough` under a `tls_passthrough` rule, and `denied`, which
 matches no chain and closes the connection, when neither covers the SNI. The
 passthrough chain resolves the SNI and relays the bytes to it on the dialed
@@ -111,9 +110,10 @@ port; the address the actor dialed plays no part (see
 Identity on the request legs is `dev.ate.actor.identity`, the actor's SPIFFE
 ID that the outer chain set from the verified peer certificate and shares with
 the inner listener. Envoy builds every inner connection from the filter state
-of the tunnel that created its pool, so `mitm_internal` keeps one pool per
-downstream connection, which on the HTTP/1 egress listener is one per tunnel:
-no tunnel inherits another's identity, authority or rules. Nothing inside the
+of the tunnel that created its pool, so `mitm_internal` keys its pools on the
+identity, the CONNECT authority and the policy hash: tunnels share a pool only
+when all three match, and no tunnel inherits another's identity, authority or
+rules. Nothing inside the
 tunnel can write any of this; a callout without an identity is refused.
 
 Policies are read through a per-actor cache (`--egress-policy-cache-ttl`, 10s
@@ -122,15 +122,16 @@ create, update or delete is visible to new requests within one TTL, and a
 deleted policy becomes a deny. Every policy denial answers a fixed
 `egress denied` body; the reason is in the sidecar's log.
 
-Credential injection (`replace_headers`) runs on the MITM leg: a header the
-request carries is replaced with the credential from the provider, and a
+Credential injection (`replace_headers`) runs on both request legs: a header
+the request carries is replaced with the credential from the provider, and a
 request without it is forwarded unchanged. See
 `docs/egress-credential-injection.md`.
 
 ## adding a dataplane attribute
 
 The filter-state objects and request attributes a proxy carries alongside
-a request are declared once, in `extproc/attributes.go`.
+a request are declared once, in `extproc/attributes.go`. The exception is the
+keys only the router's generated Envoy config reads, which stay in `xds.go`.
 
 | key | direction | purpose |
 | --- | --- | --- |
@@ -144,6 +145,7 @@ a request are declared once, in `extproc/attributes.go`.
 | `dev.ate.egress:host` | egress | dynamic metadata: the name the request was decided on, which the forward proxy dials on the port the actor dialed |
 | `dev.ate.egress.filter_chain` | egress | filter state: the egress-policy module's verdict, which selects the inner filter chain |
 | `dev.ate.extproc.direction` | egress | selects the egress handler for dataplanes without Envoy filter chains |
+| `dev.ate.tunnel.{key,worker,actor,port}` | ingress | filter state: the routing decision carried into `actor_connect` (declared in `xds.go`) |
 
 ### name it
 

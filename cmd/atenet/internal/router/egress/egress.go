@@ -99,9 +99,8 @@ type Handler struct {
 // trusted_ca; see verifyActorCertificate for why it is checked again here.
 // policyCacheTTL of 0 fetches the policy on every callout.
 //
-// provider resolves an allowed rule's credential_uri injections on the
-// TLS-terminated MITM leg; nil leaves them off, so a request that needs one is
-// denied. Actor JWT injections need no provider. providerName, when set, is
+// provider resolves an allowed rule's credential_uri injections; nil leaves
+// them off, so a request that needs one is denied. Actor JWT injections need no provider. providerName, when set, is
 // the provider this gateway serves; a credential URI naming another provider
 // is refused.
 func New(apiClient ateapipb.ControlClient, actorIdentityRoots *x509.CertPool, policyCacheTTL time.Duration, provider credproviderpb.CredentialProviderClient, providerName string) *Handler {

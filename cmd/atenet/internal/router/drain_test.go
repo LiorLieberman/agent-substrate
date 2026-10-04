@@ -25,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"go.ate.dev/substrate/internal/serverboot"
@@ -77,66 +78,68 @@ func (r *orderRecorder) get() []string {
 // order and that an in-flight ext_proc stream releasing promptly lets the
 // drain complete without a force stop.
 func TestDrainOnShutdownOrdering(t *testing.T) {
-	rec := &orderRecorder{}
-	stopper := newFakeStopper()
-	readiness := &serverboot.Readiness{}
+	synctest.Test(t, func(t *testing.T) {
+		rec := &orderRecorder{}
+		stopper := newFakeStopper()
+		readiness := &serverboot.Readiness{}
 
-	// Release the "parked request" shortly after GracefulStop begins.
-	go func() {
-		for !stopper.gracefulCalled.Load() {
-			time.Sleep(5 * time.Millisecond)
+		// Release the "parked request" shortly after GracefulStop begins.
+		go func() {
+			for !stopper.gracefulCalled.Load() {
+				time.Sleep(5 * time.Millisecond)
+			}
+			rec.add("extproc-drain-started")
+			time.Sleep(20 * time.Millisecond)
+			close(stopper.release)
+		}()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := drainOnShutdown(ctx, drainParams{
+			readiness: readiness,
+			delay:     0,
+			dataplane: drainFunc(func(context.Context) error {
+				if readiness.Ready() {
+					t.Error("dataplane drain ran before the readiness flip")
+				}
+				rec.add("dataplane")
+				return nil
+			}),
+			dataplaneWindow: time.Second,
+			extproc:         stopper,
+			timeout:         5 * time.Second,
+			stopRest: func() {
+				if !stopper.gracefulCalled.Load() {
+					t.Error("stopRest ran before the ext_proc drain")
+				}
+				rec.add("stopRest")
+			},
+		})
+
+		cancel() // simulate SIGTERM
+
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("drain did not complete")
 		}
-		rec.add("extproc-drain-started")
-		time.Sleep(20 * time.Millisecond)
-		close(stopper.release)
-	}()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := drainOnShutdown(ctx, drainParams{
-		readiness: readiness,
-		delay:     0,
-		dataplane: drainFunc(func(context.Context) error {
-			if readiness.Ready() {
-				t.Error("dataplane drain ran before the readiness flip")
-			}
-			rec.add("dataplane")
-			return nil
-		}),
-		dataplaneWindow: time.Second,
-		extproc:         stopper,
-		timeout:         5 * time.Second,
-		stopRest: func() {
-			if !stopper.gracefulCalled.Load() {
-				t.Error("stopRest ran before the ext_proc drain")
-			}
-			rec.add("stopRest")
-		},
-	})
-
-	cancel() // simulate SIGTERM
-
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("drain did not complete")
-	}
-
-	want := []string{"dataplane", "extproc-drain-started", "stopRest"}
-	got := rec.get()
-	if len(got) != len(want) {
-		t.Fatalf("drain steps = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
+		want := []string{"dataplane", "extproc-drain-started", "stopRest"}
+		got := rec.get()
+		if len(got) != len(want) {
 			t.Fatalf("drain steps = %v, want %v", got, want)
 		}
-	}
-	if stopper.stopCalled.Load() {
-		t.Error("force Stop fired although the graceful drain completed in time")
-	}
-	if readiness.Ready() {
-		t.Error("readiness should be not-ready after drain")
-	}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("drain steps = %v, want %v", got, want)
+			}
+		}
+		if stopper.stopCalled.Load() {
+			t.Error("force Stop fired although the graceful drain completed in time")
+		}
+		if readiness.Ready() {
+			t.Error("readiness should be not-ready after drain")
+		}
+	})
 }
 
 // TestDrainOnShutdownForceStopsAfterTimeout asserts a stream that never
@@ -271,9 +274,9 @@ func TestEnvoyDrainerDrainsToZero(t *testing.T) {
 }
 
 // TestEnvoyDrainerReachesIPv6OnlyAdmin guards the loopback coupling behind
-// --envoy-admin-address: the gateway admin sockets bind "::", and a drainer
-// pinned to the IPv4 loopback would find nothing listening, read that as an
-// exited Envoy, and report a drain it never performed -- silently, since that
+// --envoy-admin-address: a drainer pinned to the IPv4 loopback would find
+// nothing listening on an admin bound to the IPv6 one, read that as an exited
+// Envoy, and report a drain it never performed -- silently, since that
 // path returns nil. Hence the assertion on the POSTs rather than on the error.
 func TestEnvoyDrainerReachesIPv6OnlyAdmin(t *testing.T) {
 	ln, err := net.Listen("tcp6", "[::1]:0")

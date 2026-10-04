@@ -1517,6 +1517,7 @@ func hasStorageClass(ctx context.Context, clients *e2e.Clients, name string) boo
 }
 
 func waitForActorState(ctx context.Context, t *testing.T, clients *e2e.Clients, actorName string, expectedState ateapipb.ActorState) {
+	t.Helper()
 	waitForActorStateWithTimeout(ctx, t, clients, actorName, expectedState, 60*time.Second)
 }
 

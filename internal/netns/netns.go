@@ -14,10 +14,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package netns creates Linux network namespaces and runs code, opens sockets
-// and dials inside them. Entering a namespace is a property of the OS thread,
-// so everything here locks a thread for as long as it is in one and restores
-// the caller's namespace before returning.
 package netns
 
 import (

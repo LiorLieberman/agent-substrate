@@ -82,8 +82,8 @@ type actorCertOptions struct {
 	mutate func(*x509.Certificate)
 }
 
-// issueActorCert mints a leaf off ca, mirroring what ateapi's actoridentity
-// service produces.
+// issueActorCert mints a leaf off ca, mirroring the actor certificate ateapi's
+// worker service mints.
 func (ca *testCA) issueActorCert(t *testing.T, spiffeURI string, opts actorCertOptions) *x509.Certificate {
 	t.Helper()
 	cert, err := x509.ParseCertificate(ca.issueActorCertDER(t, spiffeURI, opts))

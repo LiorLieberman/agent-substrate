@@ -16,7 +16,6 @@ package dns
 
 import (
 	"bytes"
-	"encoding/binary"
 	"log/slog"
 	"net"
 	"time"
@@ -215,7 +214,7 @@ func (h *dnsHandler) onUDPResponse(raw []byte, from net.Addr) action {
 	h.pending.deleteEntryLocked(hdr.ID)
 
 	out := bytes.Clone(raw)
-	binary.BigEndian.PutUint16(out[0:2], clientID)
+	protocol.SetTxnID(out, clientID)
 
 	return action{
 		kind:       actionDeliver,

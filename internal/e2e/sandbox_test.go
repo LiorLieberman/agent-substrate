@@ -24,8 +24,8 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// substrateFixtures are every fixture DeploySubstrateFixture is asked to
-// deploy: the pool half rendered by RenderFixtureManifest and the substrate
+// substrateFixtures are the fixtures whose rendering these tests pin: the
+// pool half rendered by RenderFixtureManifest and the substrate
 // ActorTemplate half rendered with substrateTemplateSubstitutions, plus how
 // many template documents the latter must yield.
 var substrateFixtures = []struct {

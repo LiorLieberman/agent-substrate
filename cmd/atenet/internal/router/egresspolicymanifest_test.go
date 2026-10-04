@@ -41,13 +41,14 @@ var requestLegs = []string{extproc.EgressCleartextFilterChainName, extproc.Egres
 
 type node = map[string]any
 
-// bootstrapTree parses the envoy.yaml of the atenet-egress ConfigMap in path
-// as a generic tree; the assertions read a few leaves scattered across it.
-func bootstrapTree(t *testing.T, path string) node {
+// bootstrapTree parses the envoy.yaml of the atenet-egress ConfigMap in
+// egressManifest as a generic tree; the assertions read a few leaves scattered
+// across it.
+func bootstrapTree(t *testing.T) node {
 	t.Helper()
 	var tree node
-	if err := yaml.Unmarshal([]byte(envoyConfig(t, path)), &tree); err != nil {
-		t.Fatalf("parsing envoy.yaml of %s: %v", path, err)
+	if err := yaml.Unmarshal([]byte(envoyConfig(t)), &tree); err != nil {
+		t.Fatalf("parsing envoy.yaml of %s: %v", egressManifest, err)
 	}
 	return tree
 }
@@ -165,7 +166,7 @@ func outerChain(t *testing.T, tree node) node {
 func TestEgressManifestsNameEveryExtProcChain(t *testing.T) {
 	want := []string{extproc.EgressFilterChainName, extproc.EgressTLSMITMFilterChainName, extproc.EgressCleartextFilterChainName}
 	var got []string
-	for _, lc := range allChains(bootstrapTree(t, egressManifest)) {
+	for _, lc := range allChains(bootstrapTree(t)) {
 		h := hcm(lc.chain)
 		if h == nil || filterIndex(list(h, "http_filters"), extProcFilter) < 0 {
 			continue
@@ -184,7 +185,7 @@ func TestEgressManifestsNameEveryExtProcChain(t *testing.T) {
 }
 
 func TestEgressManifestsDisableWebSocketUpgrades(t *testing.T) {
-	chains := list(mitmListener(t, bootstrapTree(t, egressManifest)), "filter_chains")
+	chains := list(mitmListener(t, bootstrapTree(t)), "filter_chains")
 	for _, name := range requestLegs {
 		chain := byName(chains, name)
 		if chain == nil {
@@ -247,7 +248,7 @@ func TestEgressManifestsExtProcFilters(t *testing.T) {
 		extproc.EgressTLSMITMFilterChainName:   {extproc.FilterChainNameAttribute, extproc.ActorIdentityFilterStateAttribute, extproc.ConnectAuthorityFilterStateAttribute, extproc.RequestedServerNameAttribute},
 	}
 	prefixes := map[string]string{} // stat_prefix -> chain
-	for _, lc := range allChains(bootstrapTree(t, egressManifest)) {
+	for _, lc := range allChains(bootstrapTree(t)) {
 		name := str(lc.chain, "name")
 		attrs, isLeg := required[name]
 		if !isLeg {
@@ -309,7 +310,7 @@ func TestEgressManifestsExtProcFilters(t *testing.T) {
 // shared with the upstream; nothing else carries them.
 func TestEgressManifestsShareIdentityWithTheInnerListener(t *testing.T) {
 	var identity, authority node
-	for _, f := range list(hcm(outerChain(t, bootstrapTree(t, egressManifest))), "http_filters") {
+	for _, f := range list(hcm(outerChain(t, bootstrapTree(t))), "http_filters") {
 		if str(f, "name") != setFilterStateFilter {
 			continue
 		}
@@ -341,7 +342,7 @@ func TestEgressManifestsShareIdentityWithTheInnerListener(t *testing.T) {
 // http_inspector steers HTTP/1.0 onto the cleartext chain; the codec has to
 // accept it there, or those requests fail before any filter runs, unlogged.
 func TestEgressManifestsCleartextAcceptsHTTP10(t *testing.T) {
-	for _, lc := range allChains(bootstrapTree(t, egressManifest)) {
+	for _, lc := range allChains(bootstrapTree(t)) {
 		if str(lc.chain, "name") != extproc.EgressCleartextFilterChainName {
 			continue
 		}
@@ -351,14 +352,10 @@ func TestEgressManifestsCleartextAcceptsHTTP10(t *testing.T) {
 	}
 }
 
-// One pool per tunnel: internal_upstream copies the filter state of the tunnel
-// that created the pool, not of the tunnel asking for a connection, and a
-// string object is not part of the pool key. A pool per downstream connection
-// is a pool per tunnel only while that connection carries one CONNECT. A
-// connection its tunnel left behind keeps its pool alive until the idle
+// A connection no tunnel holds keeps its inner pool alive until the idle
 // timeout, which must not be disabled.
-func TestEgressManifestsGiveEachTunnelItsOwnInnerPool(t *testing.T) {
-	tree := bootstrapTree(t, egressManifest)
+func TestEgressManifestsTimeOutIdleInnerConnections(t *testing.T) {
+	tree := bootstrapTree(t)
 	internal := 0
 	for _, cluster := range clusters(tree) {
 		if !strings.Contains(mustJSON(t, cluster), `"server_listener_name"`) {
@@ -430,7 +427,7 @@ func autoSNIAndSAN(cluster node) bool {
 // the origin against the Host; on the cleartext leg it does not wrap the
 // actor's plaintext.
 func TestEgressManifestsRequestLegsRouteByTheDial(t *testing.T) {
-	tree := bootstrapTree(t, egressManifest)
+	tree := bootstrapTree(t)
 	all := clusters(tree)
 	for _, lc := range allChains(tree) {
 		name := str(lc.chain, "name")
@@ -479,7 +476,7 @@ func TestEgressManifestsRequestLegsRouteByTheDial(t *testing.T) {
 // cluster only with allow_dynamic_host_from_filter_state; without it, it
 // resolves the Host as sent, into the DNS cache all actors share.
 func TestEgressManifestsRequestLegsDialTheAnsweredName(t *testing.T) {
-	tree := bootstrapTree(t, egressManifest)
+	tree := bootstrapTree(t)
 	if writers := filterStateWriters(tree, extproc.UpstreamDynamicHostFilterStateKey); len(writers) != len(requestLegs) {
 		t.Errorf("%s is set by %d filters, want one per request leg", extproc.UpstreamDynamicHostFilterStateKey, len(writers))
 	}
@@ -549,7 +546,7 @@ func mitmListener(t *testing.T, tree node) node {
 // "denied" mapping to no chain. The module runs after both inspectors, and no
 // chain keeps a filter_chain_match, which Envoy ignores once a matcher is set.
 func TestEgressManifestsInnerListenerSelectsOnTheModuleVerdict(t *testing.T) {
-	tree := bootstrapTree(t, egressManifest)
+	tree := bootstrapTree(t)
 	l := mitmListener(t, tree)
 
 	filters := list(l, "listener_filters")
@@ -597,9 +594,10 @@ func TestEgressManifestsInnerListenerSelectsOnTheModuleVerdict(t *testing.T) {
 }
 
 // The outer ext_proc must accept dev.ate.policy.egress, and the outer chain
-// must copy it after ext_proc into shared filter state for the module.
+// must copy the policy's hash after ext_proc into filter state shared with the
+// inner listener, where the module looks the rules up by it.
 func TestEgressManifestsConnectLegHandsTheSNIRulesHashToTheInnerListener(t *testing.T) {
-	tree := bootstrapTree(t, egressManifest)
+	tree := bootstrapTree(t)
 	outer := outerChain(t, tree)
 	cfg, extProcAt, filters := extProcOf(outer)
 	if cfg == nil {
@@ -646,7 +644,7 @@ func TestEgressManifestsConnectLegHandsTheSNIRulesHashToTheInnerListener(t *test
 	}
 	// These keys determine pool selection and their values are bound to the pool at the
 	// time of pool creation. All CONNECT tunnels that have the same values for these filter
-	// state keys will share to pool.
+	// state keys share a pool.
 	for _, key := range []string{
 		extproc.ActorIdentityFilterStateKey,
 		extproc.ConnectAuthorityFilterStateKey,
@@ -658,17 +656,17 @@ func TestEgressManifestsConnectLegHandsTheSNIRulesHashToTheInnerListener(t *test
 		}
 	}
 	if at < 0 {
-		t.Fatalf("the writer of %s is not on the outer chain, where the answer is", extproc.EgressPolicyMetadataNamespace)
+		t.Fatalf("the writer of %s is not on the outer chain, where the answer is", extproc.EgressPolicyHashFilterStateKey)
 	}
 	if at < extProcAt {
-		t.Errorf("%s is set at http_filters[%d], before ext_proc at [%d]; the metadata it reads does not exist yet", extproc.EgressPolicyMetadataNamespace, at, extProcAt)
+		t.Errorf("%s is set at http_filters[%d], before ext_proc at [%d]; the metadata it reads does not exist yet", extproc.EgressPolicyHashFilterStateKey, at, extProcAt)
 	}
 	format := child(entry, "format_string")
 	if got := str(child(format, "text_format_source"), "inline_string"); got != extproc.EgressPolicyHashFormat {
 		t.Errorf("%s is set from %q, want %q", extproc.EgressPolicyHashFilterStateKey, got, extproc.EgressPolicyHashFormat)
 	}
 	if skip, _ := entry["skip_if_empty"].(bool); !skip {
-		t.Errorf("%s is not skip_if_empty; an absent answer would be written as unparseable JSON", extproc.EgressPolicyMetadataNamespace)
+		t.Errorf("%s is not skip_if_empty; an absent hash would be written as an empty one", extproc.EgressPolicyHashFilterStateKey)
 	}
 }
 
@@ -676,7 +674,7 @@ func TestEgressManifestsConnectLegHandsTheSNIRulesHashToTheInnerListener(t *test
 // record. It must log only NR connections and include the SNI, actor, and
 // verdict.
 func TestEgressManifestsInnerListenerLogsDeniedConnections(t *testing.T) {
-	tree := bootstrapTree(t, egressManifest)
+	tree := bootstrapTree(t)
 	logs := list(mitmListener(t, tree), "access_log")
 	if len(logs) == 0 {
 		t.Fatal("mitm_listener has no access_log; a ClientHello the module denies would leave no record")
@@ -710,7 +708,7 @@ func TestEgressManifestsInnerListenerLogsDeniedConnections(t *testing.T) {
 // actor dialed must have no way in, and only this chain may dial the raw
 // cluster, since nothing else authorizes a by-name dial without a request leg.
 func TestEgressManifestsPassthroughChainDialsTheResolvedSNI(t *testing.T) {
-	tree := bootstrapTree(t, egressManifest)
+	tree := bootstrapTree(t)
 	chain := byName(list(mitmListener(t, tree), "filter_chains"), "egress_passthrough")
 	if chain == nil {
 		t.Fatal("no egress_passthrough chain on mitm_listener")
@@ -783,7 +781,7 @@ func TestEgressManifestsPassthroughChainDialsTheResolvedSNI(t *testing.T) {
 // else. The forward proxy falls back to its configured port when the state is
 // absent, so a missing port would silently redirect the connection.
 func TestEgressManifestsConnectLegHandsTheDialedPortToTheInnerListener(t *testing.T) {
-	tree := bootstrapTree(t, egressManifest)
+	tree := bootstrapTree(t)
 	writers := filterStateWriters(tree, extproc.UpstreamDynamicPortFilterStateKey)
 	if len(writers) != 1 {
 		t.Fatalf("%s is set by %d filters, want exactly the CONNECT leg's copy of its answer", extproc.UpstreamDynamicPortFilterStateKey, len(writers))

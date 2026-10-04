@@ -261,11 +261,7 @@ func TestEgressRenewsBeforeExpiry(t *testing.T) {
 	if err := egress.Activate(testActorUID, dialer, source, time.Now().Add(80*time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-renewed:
-	case <-time.After(time.Second):
-		t.Fatal("certificate was not renewed")
-	}
+	receiveWithin(t, renewed, "the certificate to be renewed")
 	waitFor(t, "the renewed certificate expiry to be installed", func() bool {
 		egress.mu.Lock()
 		defer egress.mu.Unlock()
@@ -303,11 +299,7 @@ func TestEgressStopsAfterTerminalRenewalFailure(t *testing.T) {
 			}, time.Now().Add(50*time.Millisecond)); err != nil {
 				t.Fatal(err)
 			}
-			select {
-			case <-called:
-			case <-time.After(time.Second):
-				t.Fatal("certificate renewal did not start")
-			}
+			receiveWithin(t, called, "certificate renewal to start")
 
 			waitFor(t, "the terminal renewal failure to block new egress", func() bool {
 				egress.mu.Lock()
@@ -337,11 +329,7 @@ func TestEgressDeactivationDropsConcurrentRenewal(t *testing.T) {
 	egress.mu.Lock()
 	active := egress.active[testActorUID]
 	egress.mu.Unlock()
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("certificate renewal did not start")
-	}
+	receiveWithin(t, started, "certificate renewal to start")
 	done := make(chan error, 1)
 	go func() { done <- egress.Deactivate(context.Background(), testActorUID) }()
 	receiveWithin(t, active.ctx.Done(), "egress cancellation")

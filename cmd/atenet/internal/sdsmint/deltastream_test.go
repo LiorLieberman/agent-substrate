@@ -223,7 +223,7 @@ func TestDeltaSecretsMintsSubscribedName(t *testing.T) {
 // re-minted. Envoy drops a resource when its TTL fires and re-subscribes on the
 // next handshake; nothing on this side pushes. A resource sent without a ttl is
 // held by Envoy for good, and the leaf inside it goes on being served long past
-// its notAfter -- see poc/sdsmint/expiry, which measured both.
+// its notAfter.
 func TestDeltaSecretsStampsResourceTTL(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		srv := testServer(t, serverOptions{})

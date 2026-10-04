@@ -22,8 +22,8 @@ import (
 	"regexp"
 )
 
-// noColor() disables colors for tests running in environments without colored output.
 var (
+	// NoColor disables colored output, for environments that cannot show it.
 	NoColor bool
 	// envNoColor (see https://no-color.org/)
 	envNoColor bool
@@ -71,6 +71,8 @@ func init() {
 	envNoColor = os.Getenv("NO_COLOR") != ""
 }
 
+// noColor reports whether to disable colors, for tests running in
+// environments without colored output.
 func noColor() bool {
 	return NoColor || envNoColor
 }

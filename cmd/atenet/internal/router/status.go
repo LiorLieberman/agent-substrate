@@ -122,7 +122,7 @@ func (s *RouterServer) handleStatusz(w http.ResponseWriter, req *http.Request) {
 
 	var rawQueries []extproc.RecordedQuery
 	if s.extprocSrv != nil {
-		rawQueries = s.extprocSrv.Queries()
+		rawQueries = s.extprocSrv.Recorder().Get()
 	}
 
 	formattedQueries := make([]FormattedQuery, len(rawQueries))

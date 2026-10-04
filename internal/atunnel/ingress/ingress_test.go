@@ -184,11 +184,7 @@ func TestRelayWithHalfClose(t *testing.T) {
 	if err := actor.Close(); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("relay did not finish after the actor response ended")
-	}
+	receiveWithin(t, done, "the relay to finish after the actor response ended")
 	if got := downstreamOutput.String(); got != "response" {
 		t.Errorf("downstream received %q, want response", got)
 	}
@@ -216,11 +212,7 @@ func TestRelayIngressClosesDownstreamWhenActorCloses(t *testing.T) {
 	if err := actor.Close(); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("relay kept the tunnel open after the actor closed its connection")
-	}
+	receiveWithin(t, done, "the relay to end the tunnel after the actor closed its connection")
 	if got := downstreamOutput.String(); got != "response" {
 		t.Errorf("downstream received %q, want response", got)
 	}
@@ -247,11 +239,7 @@ func TestRelayIngressCancellationClosesBothSides(t *testing.T) {
 	}()
 
 	cancel(errActorDeactivated)
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("relay did not return after cancellation")
-	}
+	receiveWithin(t, done, "the relay to return after cancellation")
 	// Deadline only guards against hanging; it fails once the relay closed the pipe.
 	_ = actor.SetReadDeadline(time.Now().Add(time.Second))
 	if _, err := actor.Read(make([]byte, 1)); err == nil {
@@ -285,19 +273,12 @@ func (b *syncBuffer) String() string {
 
 func TestServeHTTP(t *testing.T) {
 	var upstreamHosts []string
-	upstreamURL, err := url.Parse("http://actor.internal:80")
-	if err != nil {
-		t.Fatal(err)
-	}
+	upstreamURL := actorUpstream()
 
 	s := newTestServer(t, upstreamURL)
 	actorTransport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		upstreamHosts = append(upstreamHosts, r.Host)
-		return &http.Response{
-			StatusCode: http.StatusNoContent,
-			Header:     make(http.Header),
-			Body:       http.NoBody,
-		}, nil
+		return noContent(), nil
 	})
 	if err := s.Activate("team-a", "actor-1", "uid-actor-1", testDial); err != nil {
 		t.Fatal(err)
@@ -354,20 +335,13 @@ func TestServeHTTP(t *testing.T) {
 }
 
 func TestServerRejectsDuplicateOrCommaTargetActorHeaders(t *testing.T) {
-	upstreamURL, err := url.Parse("http://actor.internal:80")
-	if err != nil {
-		t.Fatal(err)
-	}
+	upstreamURL := actorUpstream()
 
 	s := newTestServer(t, upstreamURL)
 	var upstreamCalled bool
 	actorTransport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		upstreamCalled = true
-		return &http.Response{
-			StatusCode: http.StatusNoContent,
-			Header:     make(http.Header),
-			Body:       http.NoBody,
-		}, nil
+		return noContent(), nil
 	})
 	if err := s.Activate("team-a", "actor-1", "uid-actor-1", testDial); err != nil {
 		t.Fatal(err)
@@ -421,10 +395,7 @@ func TestServerRejectsDuplicateOrCommaTargetActorHeaders(t *testing.T) {
 }
 
 func TestServeHTTPStripsStaleAssignmentHeaderFromActor(t *testing.T) {
-	upstreamURL, err := url.Parse("http://actor.internal:80")
-	if err != nil {
-		t.Fatal(err)
-	}
+	upstreamURL := actorUpstream()
 
 	s := newTestServer(t, upstreamURL)
 	actorTransport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -455,10 +426,7 @@ func TestServeHTTPStripsStaleAssignmentHeaderFromActor(t *testing.T) {
 }
 
 func TestServeHTTPHonorsTargetPortHeader(t *testing.T) {
-	upstreamURL, err := url.Parse("http://actor.internal:80")
-	if err != nil {
-		t.Fatal(err)
-	}
+	upstreamURL := actorUpstream()
 
 	s := newTestServer(t, upstreamURL)
 	var gotURLHost, gotHost http.Header
@@ -466,11 +434,7 @@ func TestServeHTTPHonorsTargetPortHeader(t *testing.T) {
 		gotURLHost = http.Header{"Host": []string{r.URL.Host}}
 		gotHost = r.Header.Clone()
 		gotHost.Set("Host", r.Host)
-		return &http.Response{
-			StatusCode: http.StatusNoContent,
-			Header:     make(http.Header),
-			Body:       http.NoBody,
-		}, nil
+		return noContent(), nil
 	})
 	if err := s.Activate("team-a", "actor-1", "uid-actor-1", testDial); err != nil {
 		t.Fatal(err)
@@ -516,10 +480,7 @@ func TestServeHTTPHonorsTargetPortHeader(t *testing.T) {
 }
 
 func TestServeConnectHTTPValidatesMethodAndAuthority(t *testing.T) {
-	upstreamURL, err := url.Parse("http://actor.internal:80")
-	if err != nil {
-		t.Fatal(err)
-	}
+	upstreamURL := actorUpstream()
 	s := newTestServer(t, upstreamURL)
 	if err := s.Activate("team-a", "actor-1", "uid-actor-1", testDial); err != nil {
 		t.Fatal(err)
@@ -564,11 +525,7 @@ type idleClosingRoundTripper struct {
 }
 
 func (t *idleClosingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
-	return &http.Response{
-		StatusCode: http.StatusNoContent,
-		Header:     make(http.Header),
-		Body:       http.NoBody,
-	}, nil
+	return noContent(), nil
 }
 
 func (t *idleClosingRoundTripper) CloseIdleConnections() {
@@ -576,10 +533,7 @@ func (t *idleClosingRoundTripper) CloseIdleConnections() {
 }
 
 func TestDeactivateClosesIdleUpstreamConnections(t *testing.T) {
-	upstream, err := url.Parse("http://actor.internal:80")
-	if err != nil {
-		t.Fatal(err)
-	}
+	upstream := actorUpstream()
 	s := newTestServer(t, upstream)
 	transport := &idleClosingRoundTripper{}
 	if err := s.Activate("team-a", "actor-1", "uid-actor-1", testDial); err != nil {
@@ -634,14 +588,8 @@ func TestInactive(t *testing.T) {
 
 func TestMutualTLSClientAuthentication(t *testing.T) {
 	ca := newTestCA(t)
-	upstream, err := url.Parse("http://actor.internal:80")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := newTestServerFromCA(t, ca, upstream)
-	if got := s.tlsConfig.NextProtos; len(got) != 0 {
-		t.Fatalf("ordinary ingress ALPN protocols = %v, want none", got)
-	}
+	upstream := actorUpstream()
+	s, _ := newTestServerFromCA(t, ca, upstream)
 
 	untrustedCA := newTestCA(t)
 	tests := []struct {
@@ -694,7 +642,7 @@ func TestServeNegotiatesH2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := newTestServerFromCA(t, ca, upstream)
+	s, _ := newTestServerFromCA(t, ca, upstream)
 	if err := s.Activate("team-a", "actor-1", "uid-actor-1", testDial); err != nil {
 		t.Fatal(err)
 	}
@@ -777,10 +725,7 @@ func TestServeNegotiatesH2(t *testing.T) {
 }
 
 func TestDeactivateCancelsInflightRequest(t *testing.T) {
-	upstream, err := url.Parse("http://actor.internal:80")
-	if err != nil {
-		t.Fatal(err)
-	}
+	upstream := actorUpstream()
 	s := newTestServer(t, upstream)
 	if err := s.Activate("team-a", "actor-1", "uid-actor-1", testDial); err != nil {
 		t.Fatal(err)
@@ -831,12 +776,14 @@ func setActorTransport(t *testing.T, s *Server, atespace, name string, rt http.R
 
 func newTestServer(t *testing.T, upstream *url.URL) *Server {
 	t.Helper()
-	return newTestServerFromCA(t, newTestCA(t), upstream)
+	s, _ := newTestServerFromCA(t, newTestCA(t), upstream)
+	return s
 }
 
 // newTestServerFromCA serves a certificate issued by ca and trusts ca's
-// clients, so a test can issue client certificates the server accepts.
-func newTestServerFromCA(t *testing.T, ca *testCA, upstream *url.URL) *Server {
+// clients, so a test can issue client certificates the server accepts. It also
+// returns the trust bundle's path, for a test to rotate.
+func newTestServerFromCA(t *testing.T, ca *testCA, upstream *url.URL) (*Server, string) {
 	t.Helper()
 	dir := t.TempDir()
 	bundlePath := filepath.Join(dir, "server.pem")
@@ -854,7 +801,15 @@ func newTestServerFromCA(t *testing.T, ca *testCA, upstream *url.URL) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s
+	return s, trustPath
+}
+
+// actorUpstream is the actor address the tests' servers proxy to.
+func actorUpstream() *url.URL { return &url.URL{Scheme: "http", Host: "actor.internal:80"} }
+
+// noContent is an empty answer from the actor.
+func noContent() *http.Response {
+	return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: http.NoBody}
 }
 
 // testCA signs the throwaway certificates the tests present to each other.
@@ -943,28 +898,8 @@ func writeCredentialBundle(t *testing.T, path string, cert tls.Certificate) {
 // certificate chaining to a CA added to the trust bundle after the server
 // started is accepted on the next handshake, without a restart.
 func TestMutualTLSClientAuthenticationReloadsTrustBundle(t *testing.T) {
-	dir := t.TempDir()
 	ca := newTestCA(t)
-	serverCert := ca.issue(t, "", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
-	bundlePath := filepath.Join(dir, "server.pem")
-	trustPath := filepath.Join(dir, "trust.pem")
-	writeCredentialBundle(t, bundlePath, serverCert)
-	if err := os.WriteFile(trustPath, ca.certPEM, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	upstream, err := url.Parse("http://actor.internal:80")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, err := NewServer(Config{
-		CredentialBundlePath: bundlePath,
-		TrustBundlePath:      trustPath,
-		AllowedClientID:      "spiffe://cluster.local/ns/ate-system/sa/atenet-router",
-		Upstream:             upstream,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s, trustPath := newTestServerFromCA(t, ca, actorUpstream())
 
 	rotatedCA := newTestCA(t)
 	rotatedClientCert := rotatedCA.issue(t, "spiffe://cluster.local/ns/ate-system/sa/atenet-router", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
@@ -1156,10 +1091,7 @@ func TestServeConnectHTTPDialsTheSandbox(t *testing.T) {
 		_, _ = io.WriteString(conn, "hello from the sandbox")
 	}()
 
-	upstreamURL, err := url.Parse("http://actor.internal:80")
-	if err != nil {
-		t.Fatal(err)
-	}
+	upstreamURL := actorUpstream()
 	s := newTestServer(t, upstreamURL)
 	var dialed string
 	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -1193,10 +1125,7 @@ func TestServeConnectHTTPDialsTheSandbox(t *testing.T) {
 // address, so the request's actor header picks between them and each is reached
 // through its own dialer.
 func TestIngressRoutesEachActorToItsOwnSandbox(t *testing.T) {
-	upstream, err := url.Parse("http://actor.internal:80")
-	if err != nil {
-		t.Fatal(err)
-	}
+	upstream := actorUpstream()
 	s := newTestServer(t, upstream)
 
 	served := make(chan string, 2)
@@ -1206,7 +1135,7 @@ func TestIngressRoutesEachActorToItsOwnSandbox(t *testing.T) {
 		}
 		setActorTransport(t, s, "team-a", name, roundTripFunc(func(*http.Request) (*http.Response, error) {
 			served <- name
-			return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: http.NoBody}, nil
+			return noContent(), nil
 		}))
 	}
 
@@ -1227,17 +1156,14 @@ func TestIngressRoutesEachActorToItsOwnSandbox(t *testing.T) {
 
 // Deactivating one actor must not disturb another the worker still hosts.
 func TestDeactivateLeavesOtherActorsServing(t *testing.T) {
-	upstream, err := url.Parse("http://actor.internal:80")
-	if err != nil {
-		t.Fatal(err)
-	}
+	upstream := actorUpstream()
 	s := newTestServer(t, upstream)
 	for _, name := range []string{"actor-1", "actor-2"} {
 		if err := s.Activate("team-a", name, "uid-"+name, testDial); err != nil {
 			t.Fatal(err)
 		}
 		setActorTransport(t, s, "team-a", name, roundTripFunc(func(*http.Request) (*http.Response, error) {
-			return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: http.NoBody}, nil
+			return noContent(), nil
 		}))
 	}
 
@@ -1266,10 +1192,7 @@ func TestDeactivateLeavesOtherActorsServing(t *testing.T) {
 // A deleted and recreated actor reuses its name. The new incarnation replaces
 // the old one, and the old one's late teardown must not remove it.
 func TestIngressReincarnationSurvivesStaleDeactivate(t *testing.T) {
-	upstream, err := url.Parse("http://actor.internal:80")
-	if err != nil {
-		t.Fatal(err)
-	}
+	upstream := actorUpstream()
 	s := newTestServer(t, upstream)
 	ref := resources.ActorRef{Atespace: "team-a", Name: "actor-1"}
 

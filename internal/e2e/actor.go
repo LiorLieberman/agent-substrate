@@ -19,12 +19,16 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 )
 
 // CreateActor creates the actor ref from template, and suspends and deletes it
-// when the test ends. Cleanup is best-effort and gets its own context so it
-// still runs after the test's has been canceled.
+// when the test ends. Cleanup is best-effort, logs an actor it could not
+// delete, and gets its own context so it still runs after the test's has been
+// canceled.
 func CreateActor(t *testing.T, ctx context.Context, clients *Clients, ref, template *ateapipb.ObjectRef) {
 	t.Helper()
 	if _, err := clients.SubstrateAPI.CreateActor(ctx, &ateapipb.CreateActorRequest{Actor: &ateapipb.Actor{
@@ -38,7 +42,10 @@ func CreateActor(t *testing.T, ctx context.Context, clients *Clients, ref, templ
 		defer cancel()
 		// DeleteActor requires a suspended actor.
 		_, _ = clients.SubstrateAPI.SuspendActor(cleanupCtx, &ateapipb.SuspendActorRequest{Actor: ref})
-		_, _ = clients.SubstrateAPI.DeleteActor(cleanupCtx, &ateapipb.DeleteActorRequest{Actor: ref})
+		if _, err := clients.SubstrateAPI.DeleteActor(cleanupCtx, &ateapipb.DeleteActorRequest{Actor: ref}); err != nil && status.Code(err) != codes.NotFound {
+			t.Logf("cleanup: DeleteActor %s/%s failed, actor leaked (remove with: kubectl ate delete actor %s -a %s): %v",
+				ref.GetAtespace(), ref.GetName(), ref.GetName(), ref.GetAtespace(), err)
+		}
 	})
 }
 

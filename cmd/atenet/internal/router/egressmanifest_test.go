@@ -15,9 +15,7 @@
 package router
 
 import (
-	"os"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +36,7 @@ const egressManifest = "../../../../manifests/ate-install/atenet-egress.yaml"
 // mid-stream at 15s. This manifest is what the gateway actually runs, and
 // nothing else in the tree notices when it loses the line.
 func TestEgressManifestsDisableTheConnectTimeout(t *testing.T) {
-	routes := connectRoutes(t, envoyConfig(t, egressManifest))
+	routes := connectRoutes(t, envoyConfig(t))
 	if len(routes) == 0 {
 		t.Fatal("found no connect_matcher route; the manifest changed shape and this test is checking nothing")
 	}
@@ -112,41 +110,25 @@ func connectRoutes(t *testing.T, raw string) []envoyRoute {
 	return out
 }
 
-// envoyConfig is the envoy.yaml the atenet-egress ConfigMap in path ships.
-func envoyConfig(t *testing.T, path string) string {
+// envoyConfig is the envoy.yaml the atenet-egress ConfigMap in egressManifest
+// ships.
+func envoyConfig(t *testing.T) string {
 	t.Helper()
-	return envoyConfigFrom(t, path, "atenet-egress")
+	return envoyConfigFrom(t, egressManifest, "atenet-egress")
 }
 
 // envoyConfigFrom is the envoy.yaml the ConfigMap named configMap in path ships.
 func envoyConfigFrom(t *testing.T, path, configMap string) string {
 	t.Helper()
-	manifest, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
+	var cm struct {
+		Data map[string]string `json:"data"`
 	}
-	for _, doc := range strings.Split(string(manifest), "\n---\n") {
-		var obj struct {
-			Kind     string `json:"kind"`
-			Metadata struct {
-				Name string `json:"name"`
-			} `json:"metadata"`
-			Data map[string]string `json:"data"`
-		}
-		if err := yaml.Unmarshal([]byte(doc), &obj); err != nil {
-			t.Fatalf("parsing a document of %s: %v", path, err)
-		}
-		if obj.Kind != "ConfigMap" || obj.Metadata.Name != configMap {
-			continue
-		}
-		envoyYaml, ok := obj.Data["envoy.yaml"]
-		if !ok {
-			t.Fatalf("the %s ConfigMap in %s has no envoy.yaml key", configMap, path)
-		}
-		return envoyYaml
+	manifestObject(t, path, "ConfigMap", configMap, &cm)
+	envoyYaml, ok := cm.Data["envoy.yaml"]
+	if !ok {
+		t.Fatalf("the %s ConfigMap in %s has no envoy.yaml key", configMap, path)
 	}
-	t.Fatalf("%s has no ConfigMap named %s", path, configMap)
-	return ""
+	return envoyYaml
 }
 
 // wantSampledLogFilter is the filter on the access logs of the per-request legs.
@@ -181,7 +163,7 @@ func TestEgressManifestsSampleThePerRequestAccessLogs(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(wantSampledLogFilter), &want); err != nil {
 		t.Fatalf("parsing wantSampledLogFilter: %v", err)
 	}
-	logs := chainAccessLogsByLeg(bootstrapTree(t, egressManifest))
+	logs := chainAccessLogsByLeg(bootstrapTree(t))
 	sampledLegs := []string{"mitm", "cleartext"}
 	for _, leg := range sampledLegs {
 		t.Run(leg, func(t *testing.T) {

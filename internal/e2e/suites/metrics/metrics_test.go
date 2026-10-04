@@ -133,8 +133,8 @@ func TestPlatformMetricsEmitted(t *testing.T) {
 				for _, line := range strings.Split(scrape, "\n") {
 					if strings.HasPrefix(line, metric) {
 						foundLine = true
-						nsVal := extractLabelValue(line, "ate_workerpool_namespace")
-						poolVal := extractLabelValue(line, "ate_workerpool_name")
+						nsVal := e2e.PromLabelValue(line, "ate_workerpool_namespace")
+						poolVal := e2e.PromLabelValue(line, "ate_workerpool_name")
 						var lineErrs []string
 						if nsVal == "" {
 							lineErrs = append(lineErrs, "ate_workerpool_namespace label is missing or empty")
@@ -158,12 +158,12 @@ func TestPlatformMetricsEmitted(t *testing.T) {
 			for _, line := range strings.Split(scrape, "\n") {
 				if strings.HasPrefix(line, "ate_actor_crashes") {
 					foundCrashLine = true
-					opVal := extractLabelValue(line, "ate_actor_operation_name")
-					tmplAtespaceVal := extractLabelValue(line, "ate_template_atespace")
-					tmplNameVal := extractLabelValue(line, "ate_template_name")
-					workerPoolNSVal := extractLabelValue(line, "ate_workerpool_namespace")
-					workerPoolVal := extractLabelValue(line, "ate_workerpool_name")
-					sandboxVal := extractLabelValue(line, "ate_sandbox_class")
+					opVal := e2e.PromLabelValue(line, "ate_actor_operation_name")
+					tmplAtespaceVal := e2e.PromLabelValue(line, "ate_template_atespace")
+					tmplNameVal := e2e.PromLabelValue(line, "ate_template_name")
+					workerPoolNSVal := e2e.PromLabelValue(line, "ate_workerpool_namespace")
+					workerPoolVal := e2e.PromLabelValue(line, "ate_workerpool_name")
+					sandboxVal := e2e.PromLabelValue(line, "ate_sandbox_class")
 
 					var crashErrs []string
 					if opVal == "" {
@@ -278,10 +278,10 @@ func validateSnapshotPhaseLabels(scrape string) error {
 			if !strings.HasPrefix(line, m) {
 				continue
 			}
-			phase := extractLabelValue(line, "ate_snapshot_phase")
-			kind := extractLabelValue(line, "ate_snapshot_kind")
-			fidelity := extractLabelValue(line, "ate_snapshot_fidelity")
-			class := extractLabelValue(line, "ate_sandbox_class")
+			phase := e2e.PromLabelValue(line, "ate_snapshot_phase")
+			kind := e2e.PromLabelValue(line, "ate_snapshot_kind")
+			fidelity := e2e.PromLabelValue(line, "ate_snapshot_fidelity")
+			class := e2e.PromLabelValue(line, "ate_sandbox_class")
 			if phase == "" {
 				return fmt.Errorf("%s line is missing ate_snapshot_phase: %q", m, line)
 			}
@@ -332,18 +332,4 @@ func suspend(t *testing.T, ctx context.Context, clients *e2e.Clients, actorID st
 func waitForStatus(t *testing.T, ctx context.Context, clients *e2e.Clients, actorID string, want ateapipb.ActorState) {
 	t.Helper()
 	e2e.WaitForActorState(t, ctx, clients, &ateapipb.ObjectRef{Atespace: metricsAtespace, Name: actorID}, want, 2*time.Minute)
-}
-
-func extractLabelValue(line, labelName string) string {
-	key := labelName + `="`
-	idx := strings.Index(line, key)
-	if idx == -1 {
-		return ""
-	}
-	start := idx + len(key)
-	end := strings.IndexByte(line[start:], '"')
-	if end == -1 {
-		return ""
-	}
-	return line[start : start+end]
 }

@@ -234,21 +234,7 @@ func createAndResumeActor(t *testing.T, ctx context.Context, clients *e2e.Client
 	// requires SUSPENDED or CRASHED, hence the suspend first).
 	_, _ = clients.SubstrateAPI.SuspendActor(ctx, &ateapipb.SuspendActorRequest{Actor: ref})
 	_, _ = clients.SubstrateAPI.DeleteActor(ctx, &ateapipb.DeleteActorRequest{Actor: ref})
-	if _, err := clients.SubstrateAPI.CreateActor(ctx, &ateapipb.CreateActorRequest{Actor: &ateapipb.Actor{
-		Metadata:      &ateapipb.ResourceMetadata{Atespace: probeNamespace, Name: id},
-		ActorTemplate: &ateapipb.ObjectRef{Atespace: probeNamespace, Name: probeTemplate},
-	}}); err != nil {
-		t.Fatalf("CreateActor %q: %v", id, err)
-	}
-	t.Cleanup(func() {
-		// Suspend is best-effort: the actor may already be suspended, or may
-		// never have resumed. A failed delete is only logged — the pre-create
-		// clear above keeps the next run working regardless.
-		_, _ = clients.SubstrateAPI.SuspendActor(ctx, &ateapipb.SuspendActorRequest{Actor: ref})
-		if _, err := clients.SubstrateAPI.DeleteActor(ctx, &ateapipb.DeleteActorRequest{Actor: ref}); err != nil {
-			t.Logf("cleanup: DeleteActor %q failed, actor leaked (remove with: kubectl ate delete actor %s -a %s): %v", id, id, probeNamespace, err)
-		}
-	})
+	e2e.CreateActor(t, ctx, clients, ref, &ateapipb.ObjectRef{Atespace: probeNamespace, Name: probeTemplate})
 
 	// Resume from the golden snapshot (the restore path).
 	if _, err := e2e.ResumeActorAwaitCapacity(t, ctx, clients, &ateapipb.ResumeActorRequest{Actor: ref}); err != nil {
