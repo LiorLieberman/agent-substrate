@@ -425,6 +425,38 @@ func TestRequestLegRefusesAuthorityHostMismatch(t *testing.T) {
 	wantAllowed(t, res, err)
 }
 
+// A WebSocket or any other upgrade, and a CONNECT inside the tunnel, are
+// refused with the uniform 403 on both request legs, even to a host the policy
+// allows; the same request without them is allowed.
+func TestRequestLegRefusesStreamTakeover(t *testing.T) {
+	h := policyHandler(allowAllPolicy())
+	for _, leg := range []string{extproc.EgressCleartextFilterChainName, extproc.EgressTLSMITMFilterChainName} {
+		t.Run(leg, func(t *testing.T) {
+			for name, md := range map[string]*extproc.RequestMetadata{
+				"websocket":     withHeaders(innerMetadata(leg, "GET", "api.example.com", nil), "connection", "Upgrade", "upgrade", "websocket"),
+				"other upgrade": withHeaders(innerMetadata(leg, "GET", "api.example.com", nil), "connection", "upgrade", "upgrade", "TLS/1.3"),
+				"connect":       innerMetadata(leg, "CONNECT", "api.example.com:443", nil),
+			} {
+				_, err := h.HandleRequestHeaders(context.Background(), md)
+				wantStatus(t, err, envoy_type.StatusCode_Forbidden)
+				if err == nil || err.Error() != deniedBody {
+					t.Errorf("%s: denial body = %v, want %q", name, err, deniedBody)
+				}
+			}
+			res, err := h.HandleRequestHeaders(context.Background(), innerMetadata(leg, "GET", "api.example.com", nil))
+			wantAllowed(t, res, err)
+		})
+	}
+}
+
+// withHeaders sets name/value pairs on md's request headers.
+func withHeaders(md *extproc.RequestMetadata, pairs ...string) *extproc.RequestMetadata {
+	for i := 0; i+1 < len(pairs); i += 2 {
+		md.Headers[pairs[i]] = pairs[i+1]
+	}
+	return md
+}
+
 // A denial's body is fixed; the reason stays in the log.
 func TestDenialBodyIsUniform(t *testing.T) {
 	h := policyHandler(httpPolicy("api.example.com"))

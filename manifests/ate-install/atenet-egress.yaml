@@ -377,13 +377,11 @@ data:
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
               stat_prefix: mitm_http
-              # Absent this, Envoy answers an Upgrade request itself instead of
-              # proxying it, so every WebSocket through this leg fails at the
-              # handshake. Note it covers the HTTP/1.1 path only; WebSockets over
-              # h2 are RFC 8441 extended CONNECT and would additionally need
-              # http2_protocol_options.allow_connect.
-              upgrade_configs:
-              - upgrade_type: websocket
+              # No upgrade_configs: egress proxies no protocol upgrades
+              # (docs/egress-traffic.md). The policy ext_proc is what refuses a
+              # WebSocket, with 403; Envoy does not refuse one by itself on
+              # this chain, because its routes match only after ext_proc
+              # answers.
               # Disable stream_idle_timeout as there is already an overall timeout in the outer tunnel in the HCM.
               stream_idle_timeout: 0s
               # This is the leg that knows where the traffic actually went.
@@ -420,12 +418,8 @@ data:
                 - name: all
                   domains: ["*"]
                   routes:
-                  # Upgrade is what cannot cross an h2 upstream: forwarding one
-                  # needs RFC 8441 extended CONNECT, which almost no origin
-                  # advertises. So the default route below stays pinned to
-                  # HTTP/1.1, which every origin accepts, rather than letting
-                  # upstream ALPN choose -- ALPN takes h2 against nearly
-                  # everything today, and every WebSocket then fails with a 502.
+                  # The default route below is pinned to HTTP/1.1, which every
+                  # origin accepts, rather than letting upstream ALPN choose.
                   #
                   # gRPC is the one thing that default cannot serve: its status
                   # rides in trailers, which HTTP/1.1 cannot express.
@@ -437,9 +431,8 @@ data:
                   #
                   # The cost of the pinned default is that non-gRPC h2 traffic
                   # is downgraded and its trailers dropped silently. Nothing
-                  # sends those today. If that changes, invert this: match on
-                  # the `upgrade` header, pin that route to HTTP/1.1, and let
-                  # everything else negotiate.
+                  # sends those today. If that changes, let upstream ALPN choose
+                  # on the default route too, as egress_forward_proxy_grpc does.
                   #
                   # Each of the two exists once per dial the sidecar answers
                   # with (dev.ate.egress:dial), and there is no default: a
@@ -623,8 +616,7 @@ data:
               # answers it 426 before any filter runs.
               http_protocol_options:
                 accept_http_10: true
-              upgrade_configs:
-              - upgrade_type: websocket
+              # No upgrade_configs; see egress_tls_mitm.
               stream_idle_timeout: 0s
               access_log:
               - name: envoy.access_loggers.file

@@ -119,6 +119,11 @@ create, update or delete is visible to new requests within one TTL, and a
 deleted policy becomes a deny. Every policy denial answers a fixed
 `egress denied` body; the reason is in the sidecar's log.
 
+A WebSocket or other protocol upgrade, and a CONNECT sent inside the tunnel,
+are refused on both request legs whatever the policy allows: nothing after
+them would be decided against it. The sidecar refuses them, not Envoy, which
+on these legs cannot pick a route until the sidecar has answered.
+
 Credential injection (`replace_headers`) runs on the MITM leg: a header the
 request carries is replaced with the credential from the provider, and a
 request without it is forwarded unchanged. See

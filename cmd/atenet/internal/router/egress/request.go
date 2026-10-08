@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	envoy_type "github.com/envoyproxy/go-control-plane/envoy/type/v3"
@@ -37,11 +38,23 @@ import (
 // where the connection's SNI must fall under an https rule too. An allowed
 // request is dialed by the name it was decided on, on the port the actor
 // dialed.
+//
+// A WebSocket or other protocol upgrade, and a CONNECT asking the gateway to
+// act as a forward proxy, are refused whatever the policy says.
 func (h *Handler) handleRequest(ctx context.Context, md *extproc.RequestMetadata, leg string) (extproc.Result, error) {
 	ref, err := actorFromFilterState(md)
 	if err != nil {
 		slog.WarnContext(ctx, "egress denied: request carries no actor identity", slog.String("leg", leg), slog.Any("err", err))
 		return extproc.Result{}, extproc.WrapReqError(envoy_type.StatusCode_Forbidden, err, deniedBody)
+	}
+	// Past an upgrade or inside a CONNECT, nothing more is decided against the
+	// policy, so docs/egress-traffic.md blocks both. Envoy does not refuse them
+	// on these legs by itself: their routes match only after this answer.
+	if reason := streamTakeover(md); reason != "" {
+		slog.WarnContext(ctx, "egress denied: "+reason,
+			slog.Any("actor", ref), slog.String("leg", leg), slog.String("method", md.Method),
+			slog.String("host", md.Host), slog.String("upgrade", md.Header("upgrade")))
+		return extproc.Result{}, extproc.NewReqError(envoy_type.StatusCode_Forbidden, deniedBody)
 	}
 	dest, err := requestDestination(md)
 	if err != nil {
@@ -167,6 +180,20 @@ func requestDestination(md *extproc.RequestMetadata) (egresspolicy.Destination, 
 		dest.Port = dialed.Port
 	}
 	return dest, nil
+}
+
+// streamTakeover returns why md would hand its connection over to a stream
+// the gateway no longer reads, or "" for an ordinary request. Any Upgrade
+// header counts: Envoy strips an h2c upgrade before ext_proc sees it, so what
+// arrives here is a WebSocket or another protocol switch.
+func streamTakeover(md *extproc.RequestMetadata) string {
+	switch {
+	case strings.EqualFold(md.Method, "CONNECT"):
+		return "CONNECT inside the tunnel is not supported"
+	case md.Header("upgrade") != "":
+		return "protocol upgrades such as WebSocket are not supported"
+	}
+	return ""
 }
 
 // actorFromFilterState reads the actor from the identity filter state the
