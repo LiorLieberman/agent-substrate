@@ -108,6 +108,15 @@ func TestRouterConfigValidate(t *testing.T) {
 			wantErr: "--drain-timeout must not be negative",
 		},
 		{
+			name: "upstream-connect with the upstream credential bundle accepted",
+			cfg:  routerConfig{Mode: ModeIngress, UpstreamConnect: true, UpstreamCredentialBundlePath: "/run/bundle.pem"},
+		},
+		{
+			name:    "upstream-connect without the upstream credential bundle rejected",
+			cfg:     routerConfig{Mode: ModeIngress, UpstreamConnect: true},
+			wantErr: "--upstream-connect requires --upstream-credential-bundle",
+		},
+		{
 			name:    "negative drain-delay rejected",
 			cfg:     routerConfig{Mode: ModeIngress, ParkedRequest: ingress.ParkedRequestConfig{Max: ingress.DefaultParkedRequestMax}, DrainDelay: -time.Second},
 			wantErr: "--drain-delay must not be negative",

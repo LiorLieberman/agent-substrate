@@ -78,6 +78,7 @@ func (s *RouterServer) startEnvoyDataplane(ctx context.Context, g *errgroup.Grou
 
 	xdsSrv.SetTlsConfig(s.cfg.HttpsPort, s.cfg.EnvoyCertPath)
 	xdsSrv.SetUpstreamTls(s.cfg.UpstreamCredentialBundlePath, s.cfg.UpstreamTrustBundlePath, s.cfg.UpstreamSpiffePrefix)
+	xdsSrv.SetUpstreamConnect(s.cfg.UpstreamConnect)
 
 	// The snapshot is a pure function of the configuration applied above, so it
 	// is built exactly once; an Envoy that connects later is served from the
