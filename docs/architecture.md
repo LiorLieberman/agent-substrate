@@ -353,7 +353,7 @@ Handles actor-aware routing and automatic re-animation.
     `atunnel`, hosted by `ateom`, forwards the request to the active Actor over
     its private veth interface. Worker pod port 80 is not a direct Actor ingress
     path. With `--upstream-connect`, the router instead reaches `atunnel`
-    through mTLS `CONNECT` tunnels on port 8443, as agentgateway always does.
+    through mTLS `CONNECT` tunnels on port 8443.
 
   * **Arbitrary-Port Ingress**: A client reaches a port on the Actor other than
     its default (80) with an HTTP `CONNECT` request naming the port in the
