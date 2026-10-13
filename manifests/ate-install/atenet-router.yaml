@@ -284,12 +284,11 @@ spec:
         - configMapRef:
             name: ate-otel-config
         # The xDS server (--port-xds) binds 127.0.0.1 and serves only the Envoy
-        # in this pod, so it is deliberately not declared as a container port.
+        # in this pod, and the /statusz page (--status-port) binds 127.0.0.1 for
+        # port-forward access, so neither is declared as a container port.
         ports:
         - name: extproc
           containerPort: 50051
-        - name: status
-          containerPort: 4040
         - name: metrics
           containerPort: 9090
         - name: health

@@ -26,8 +26,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// routerStatusPort is the router's --status-port (the "status" container
-// port). The router Service does not publish it, so the client forwards to a
+// routerStatusPort is the router's --status-port. The router binds it to
+// loopback and the Service does not publish it, so the client forwards to a
 // router pod directly.
 const routerStatusPort = 4040
 

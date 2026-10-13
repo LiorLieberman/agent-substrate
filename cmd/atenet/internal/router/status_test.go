@@ -35,7 +35,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/yaml"
 
 	"github.com/agent-substrate/substrate/cmd/atenet/internal/router/extproc"
 	"github.com/agent-substrate/substrate/cmd/atenet/internal/router/ingress"
@@ -176,42 +175,37 @@ func TestStatuszEndpoint(t *testing.T) {
 	if dashboard.Parking.MaxParked != ingress.DefaultParkedRequestMax {
 		t.Errorf("expected parking max_parked %d, got %d", ingress.DefaultParkedRequestMax, dashboard.Parking.MaxParked)
 	}
+}
 
-	// A wildcard listener would also accept connections on this address.
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.2:%d", httpPort), time.Second)
-	if err == nil {
-		conn.Close()
-		t.Error("status server accepted a connection outside its loopback bind address")
+// The manifest's router args, defaults included, keep /statusz off the pod IP.
+func TestRouterManifestBindsStatusToLoopback(t *testing.T) {
+	addr, err := routerManifestFlags(t).GetString("status-address")
+	if err != nil {
+		t.Fatalf("reading --status-address from the manifest args: %v", err)
+	}
+	// Port 0 binds any free port; only the address is under test.
+	lis, err := routerConfig{StatusAddr: addr}.listenStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lis.Close()
+	if ip := lis.Addr().(*net.TCPAddr).IP; !ip.IsLoopback() {
+		t.Errorf("--status-address %q in %s binds %s, which other pods can reach", addr, routerManifestPath, ip)
 	}
 }
 
 func TestRouterServiceDoesNotExposeStatus(t *testing.T) {
-	raw, err := os.ReadFile(routerManifestPath)
+	statusPort, err := routerManifestFlags(t).GetInt("status-port")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("reading --status-port from the manifest args: %v", err)
 	}
-	for _, doc := range strings.Split(string(raw), "\n---\n") {
-		var service corev1.Service
-		if err := yaml.Unmarshal([]byte(doc), &service.TypeMeta); err != nil {
-			t.Fatal(err)
+	var service corev1.Service
+	manifestObject(t, routerManifestPath, "Service", "atenet-router", &service)
+	for _, port := range service.Spec.Ports {
+		if port.Name == "status" || int(port.Port) == statusPort || port.TargetPort.IntValue() == statusPort || port.TargetPort.StrVal == "status" {
+			t.Errorf("router Service exposes the status server: %+v", port)
 		}
-		if service.Kind != "Service" {
-			continue
-		}
-		if err := yaml.Unmarshal([]byte(doc), &service); err != nil {
-			t.Fatal(err)
-		}
-		if service.Name != "atenet-router" {
-			continue
-		}
-		for _, port := range service.Spec.Ports {
-			if port.Name == "status" || port.Port == 4040 || port.TargetPort.IntValue() == 4040 || port.TargetPort.StrVal == "status" {
-				t.Errorf("router Service exposes the status server: %+v", port)
-			}
-		}
-		return
 	}
-	t.Fatal("router manifest has no atenet-router Service")
 }
 
 // writeTestKubeconfig writes a kubeconfig pointing at an unreachable local

@@ -233,9 +233,9 @@ Contents:
 * Last 100 queries served
 * Build tag
 
-Health checks use `/healthz` (liveness) and `/readyz` (readiness) on the metrics
-listener, configured by `--metrics-listen-addr` (default `:9090`). For a GKE
+Health checks use `/healthz` (liveness) and `/readyz` (readiness) on the health
+listener, configured by `--health-listen-addr` (default `:9091`). For a GKE
 Gateway, migrate any `HealthCheckPolicy` using port 4040 and `/statusz` to port
-9090 and `/readyz`, so draining pods also stop receiving traffic.
+9091 and `/readyz`, so draining pods also stop receiving traffic.
 [GKE probes Pod IPs directly](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/configure-gateway-resources#configure_health_checks),
-so port 9090 does not need to be published by the router Service.
+so port 9091 does not need to be published by the router Service.
