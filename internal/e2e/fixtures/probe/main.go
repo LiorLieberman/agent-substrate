@@ -318,10 +318,12 @@ func parseFetchHeaders(params []string) (http.Header, error) {
 // path. Parameters to the fetch are passed as URL query parameters:
 //
 //   - url=<URL to fetch>: required.
-//   - roots=bundle|system: the TLS trust anchors. "bundle" (the default)
+//   - roots=bundle|system|ca: the TLS trust anchors. "bundle" (the default)
 //     loads the projected trust bundle at trustFile; "system" uses the
-//     image's system roots. TestActorEgressMITMTrust documents why each mode
-//     passes or fails.
+//     image's system roots; "ca" trusts only the PEM certificates in the ca
+//     parameter. TestActorEgressMITMTrust documents why each mode passes or
+//     fails.
+//   - ca=<PEM certificates>: required with roots=ca, rejected otherwise.
 //   - header=<name>:<value>: repeatable; set on the request, so a suite can
 //     pre-seed a header and observe whether the gateway overwrites it.
 //   - dial=<host:port>: connect to this address instead of the URL's host,
@@ -351,13 +353,25 @@ func fetch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	roots := r.URL.Query().Get("roots")
+	ca := r.URL.Query().Get("ca")
 	switch roots {
 	case "", "bundle", "system":
+		if ca != "" {
+			resp["error"] = "the ca parameter needs roots=ca"
+			writeJSON(w, resp)
+			return
+		}
+	case "ca":
+		if ca == "" {
+			resp["error"] = "roots=ca needs a ca parameter"
+			writeJSON(w, resp)
+			return
+		}
 	default:
 		// Fail closed on typos: silently treating an unknown value as
 		// "bundle" would flip a suite's negative control into a positive
 		// fetch with a misleading failure message.
-		resp["error"] = "unknown roots value " + strconv.Quote(roots) + " (want bundle or system)"
+		resp["error"] = "unknown roots value " + strconv.Quote(roots) + " (want bundle, system or ca)"
 		writeJSON(w, resp)
 		return
 	}
@@ -377,15 +391,19 @@ func fetch(w http.ResponseWriter, r *http.Request) {
 	}
 	tlsCfg := &tls.Config{}
 	if roots != "system" {
-		b, err := os.ReadFile(trustFile)
-		if err != nil {
-			resp["error"] = "reading trust bundle: " + err.Error()
-			writeJSON(w, resp)
-			return
+		anchors, source := []byte(ca), "the ca parameter"
+		if roots != "ca" {
+			b, err := os.ReadFile(trustFile)
+			if err != nil {
+				resp["error"] = "reading trust bundle: " + err.Error()
+				writeJSON(w, resp)
+				return
+			}
+			anchors, source = b, trustFile
 		}
 		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(b) {
-			resp["error"] = "no certificates parsed from " + trustFile
+		if !pool.AppendCertsFromPEM(anchors) {
+			resp["error"] = "no certificates parsed from " + source
 			writeJSON(w, resp)
 			return
 		}

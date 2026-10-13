@@ -15,14 +15,18 @@
 package main
 
 import (
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/agent-substrate/substrate/internal/localca"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -260,6 +264,56 @@ func TestFetchRejectsMalformedDial(t *testing.T) {
 	}
 	if resp["status"] != "" {
 		t.Errorf("status = %q, want none", resp["status"])
+	}
+}
+
+// roots=ca trusts the given certificates and nothing else, which is how a
+// suite proves the certificate it saw is the origin's own.
+func TestFetchTrustsOnlyTheGivenCA(t *testing.T) {
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer origin.Close()
+	other, err := localca.GenerateCA("other", localca.KeyTypeECDSAP256, time.Hour)
+	if err != nil {
+		t.Fatalf("generating a CA: %v", err)
+	}
+	certPEM := func(cert *x509.Certificate) string {
+		return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}))
+	}
+
+	resp := doFetchQuery(t, url.Values{"url": {origin.URL}, "roots": {"ca"}, "ca": {certPEM(origin.Certificate())}})
+	if resp["error"] != "" || resp["status"] != "200" {
+		t.Errorf("fetch trusting the origin's certificate: status %q, error %q, want 200", resp["status"], resp["error"])
+	}
+
+	resp = doFetchQuery(t, url.Values{"url": {origin.URL}, "roots": {"ca"}, "ca": {certPEM(other.RootCertificate)}})
+	if !strings.Contains(resp["error"], "certificate") {
+		t.Errorf("fetch trusting another certificate: status %q, error %q, want a certificate error", resp["status"], resp["error"])
+	}
+}
+
+// A ca that roots does not use, or roots=ca without one, fails the fetch
+// before anything is sent.
+func TestFetchRejectsMismatchedCA(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("fetch sent the request despite mismatched roots and ca parameters")
+	}))
+	defer origin.Close()
+
+	for _, tc := range []struct {
+		name      string
+		roots, ca string
+		wantErr   string
+	}{
+		{name: "ca without roots=ca", roots: "system", ca: "pem", wantErr: "needs roots=ca"},
+		{name: "roots=ca without ca", roots: "ca", wantErr: "needs a ca parameter"},
+		{name: "ca holds no certificate", roots: "ca", ca: "not pem", wantErr: "no certificates parsed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := doFetchQuery(t, url.Values{"url": {origin.URL}, "roots": {tc.roots}, "ca": {tc.ca}})
+			if !strings.Contains(resp["error"], tc.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", resp["error"], tc.wantErr)
+			}
+		})
 	}
 }
 

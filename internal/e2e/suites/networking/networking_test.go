@@ -143,6 +143,7 @@ func TestActorEgress(t *testing.T) {
 // origin, through the gateway's TLS interception.
 func TestActorEgressHTTPS(t *testing.T) {
 	ctx := context.Background()
+	originHost, _ := hostnameOrigin(t, ctx, "https-origin")
 	fixture := e2e.EgressFixture()
 	actorAtespace, actorName, _ := createAndResumeActorWithEgress(t, ctx, "egress-https", fixture, e2e.EgressAllowAll()...)
 	router := mustRouterClient(t, ctx)
@@ -153,7 +154,7 @@ func TestActorEgressHTTPS(t *testing.T) {
 	since := metav1.NewTime(time.Now().Add(-1 * time.Minute))
 
 	actorRef := resources.ActorRef{Atespace: networkingAtespace, Name: actorName}
-	status, body := fetchThroughEgressActor(t, ctx, router, actorRef, "https://example.com/")
+	status, body := fetchThroughEgressActor(t, ctx, router, actorRef, "https://"+originHost+"/healthz")
 	if status != http.StatusOK {
 		t.Fatalf("Actor HTTPS egress fetch returned HTTP %d, want 200; body: %s", status, body)
 	}

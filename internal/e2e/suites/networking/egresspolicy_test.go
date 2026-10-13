@@ -16,7 +16,9 @@ package networking
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -38,8 +40,8 @@ func notTransient(status int, _ []byte) bool { return status != http.StatusServi
 
 // reached stops the retry loop only on success. A lane expecting the fetch to
 // work sees more transients than the 503 above (the minted leaf fails
-// verification until kubelet has propagated the CA pool, public origins
-// hiccup), all of them 502s the actor cannot tell from a denial.
+// verification until kubelet has propagated the CA pool), all of them 502s
+// the actor cannot tell from a denial.
 func reached(status int, _ []byte) bool { return status == http.StatusOK }
 
 // TestActorEgressPolicyDeniesUnlistedHost: the policy names one hostname, so
@@ -95,61 +97,103 @@ func TestActorEgressRequiresPolicy(t *testing.T) {
 	t.Logf("egress was denied as expected: %s", body)
 }
 
-// hostnamePolicyActor creates an actor whose policy allows HTTPS to
-// example.com and nothing else, and waits until it is routable.
-func hostnamePolicyActor(t *testing.T, ctx context.Context) (*e2e.RouterClient, resources.ActorRef) {
+// hostnameOrigins are the URLs of the in-cluster HTTPS origins the
+// hostname-policy actor reaches.
+type hostnameOrigins struct {
+	// intercepted is allowed by an https rule, so the gateway terminates its TLS.
+	intercepted string
+	// relayed is allowed by a tls_passthrough rule. relayedRootCA is the only
+	// CA that signs its certificate.
+	relayed, relayedRootCA string
+	// unlisted is the intercepted origin under a shorter name that no rule
+	// lists. A gateway that wrongly let it through would reach the origin, so
+	// a refusal is the policy's doing and not a failed lookup.
+	unlisted string
+}
+
+// hostnamePolicyActor creates an actor whose policy intercepts HTTPS to one
+// in-cluster origin, relays TLS to another and allows nothing else, and waits
+// until it is routable.
+func hostnamePolicyActor(t *testing.T, ctx context.Context) (*e2e.RouterClient, resources.ActorRef, hostnameOrigins) {
 	t.Helper()
-	_, actorName, _ := createAndResumeActorWithEgress(t, ctx, "egress-sni", e2e.EgressFixture(), e2e.EgressAllowHTTPS("example.com"), e2e.EgressAllowPassthrough("example.edu"))
+	interceptedHost, _ := hostnameOrigin(t, ctx, "intercepted")
+	relayedHost, relayedRootCA := hostnameOrigin(t, ctx, "relayed")
+	_, actorName, _ := createAndResumeActorWithEgress(t, ctx, "egress-sni", e2e.EgressFixture(), e2e.EgressAllowHTTPS(interceptedHost), e2e.EgressAllowPassthrough(relayedHost))
 	router := mustRouterClient(t, ctx)
 	t.Cleanup(func() { router.Close() })
 	actorRef := resources.ActorRef{Atespace: networkingAtespace, Name: actorName}
 	waitForActorRoute(t, ctx, router, actorRef)
-	return router, actorRef
+	return router, actorRef, hostnameOrigins{
+		intercepted:   "https://" + interceptedHost + "/healthz",
+		relayed:       "https://" + relayedHost + "/healthz",
+		relayedRootCA: relayedRootCA,
+		unlisted:      "https://" + strings.TrimSuffix(interceptedHost, ".cluster.local") + "/healthz",
+	}
 }
 
-func isMitmCert(body string) bool {
-	// example.* domains use certs signed by Google Trust Services
-	// If this substring is not present it means dataplane used a minted cert
-	return !strings.Contains(body, "O=Google Trust Services")
+// hostnameOrigin deploys an HTTPS origin on port 443 and returns the DNS name
+// its certificate covers and the CA that signed it.
+func hostnameOrigin(t *testing.T, ctx context.Context, name string) (string, string) {
+	t.Helper()
+	_, address, rootCA := prepareProtocolOrigin(t, ctx, e2e.ServerPod{
+		Name:       name,
+		ImportPath: "github.com/agent-substrate/substrate/internal/e2e/fixtures/testserver",
+		Args:       []string{"http"},
+		Port:       443,
+		TargetPort: 8443,
+	}, true)
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		t.Fatalf("splitting origin address %q: %v", address, err)
+	}
+	return host, rootCA
 }
 
 // TestActorEgressHTTPSByHostnameMITM: the gateway terminates the TLS and decides
-// each request by name: example.com 200, example.org 403.
+// each request by name: the listed origin 200, the unlisted name denied. The
+// actor trusts the gateway's CA and public roots but not the origin's signer,
+// so the 200 also proves the gateway minted the certificate.
 func TestActorEgressHTTPSByHostnameMITM(t *testing.T) {
 	ctx := context.Background()
 	dataplane := e2e.CurrentAtenetDataplane()
-	router, actorRef := hostnamePolicyActor(t, ctx)
+	router, actorRef, origins := hostnamePolicyActor(t, ctx)
 
-	status, body := fetchThroughEgressActorUntil(t, ctx, router, actorRef, "https://example.com/", reached)
+	status, body := fetchThroughEgressActorUntil(t, ctx, router, actorRef, origins.intercepted, reached)
 	if status != http.StatusOK {
 		t.Fatalf("fetch of the allowed host returned HTTP %d, want 200; body: %s", status, body)
 	}
-	if !isMitmCert(string(body)) {
-		t.Fatalf("request did not use minted cert; body: %s", body)
-	}
-	status, body = fetchThroughEgressActorUntil(t, ctx, router, actorRef, "https://example.org/", notTransient)
-	if !dataplane.IsEgressPolicyDenied(status, string(body)) {
-		t.Fatalf("fetch of a host outside the policy returned HTTP %d, want an egress-policy denial; body: %s", status, body)
-	}
+	status, body = fetchThroughEgressActorUntil(t, ctx, router, actorRef, origins.unlisted, notTransient)
+	assertUnlistedDenied(t, dataplane, status, body)
 	t.Logf("denied on the decrypted request: %s", body)
 }
 
-// TestActorEgressHTTPSByHostnamePassthrough: the gateway acts as TCP proxy fetching
-// allowed SNI.
+// TestActorEgressHTTPSByHostnamePassthrough: the gateway relays the TLS of the
+// allowed SNI unread. The fetch trusts only the origin's signer, which the
+// gateway holds no key for, so the 200 proves the certificate is the origin's.
 func TestActorEgressHTTPSByHostnamePassthrough(t *testing.T) {
 	ctx := context.Background()
 	dataplane := e2e.CurrentAtenetDataplane()
-	router, actorRef := hostnamePolicyActor(t, ctx)
+	router, actorRef, origins := hostnamePolicyActor(t, ctx)
 
-	status, body := fetchThroughEgressActorUntil(t, ctx, router, actorRef, "https://example.edu/", reached)
+	payload, err := json.Marshal(map[string]string{"url": origins.relayed, "rootCA": origins.relayedRootCA})
+	if err != nil {
+		t.Fatalf("marshaling the fetch request for %s: %v", origins.relayed, err)
+	}
+	status, body := postThroughEgressActorUntil(t, ctx, router, actorRef, "/", payload, reached)
 	if status != http.StatusOK {
-		t.Fatalf("fetch of the allowed host returned HTTP %d, want 200; body: %s", status, body)
+		t.Fatalf("fetch of the allowed host trusting only its own CA returned HTTP %d, want 200; body: %s", status, body)
 	}
-	if isMitmCert(string(body)) {
-		t.Fatalf("request used minted cert; body: %s", body)
-	}
-	status, body = fetchThroughEgressActorUntil(t, ctx, router, actorRef, "https://example.org/", notTransient)
-	if !dataplane.IsEgressPolicyDenied(status, string(body)) {
+	status, body = fetchThroughEgressActorUntil(t, ctx, router, actorRef, origins.unlisted, notTransient)
+	assertUnlistedDenied(t, dataplane, status, body)
+}
+
+// assertUnlistedDenied fails unless the fetch of the unlisted name was refused
+// by egress policy. On Envoy a refusal looks like any failed request, so a
+// certificate error is ruled out by name: it means the gateway relayed the
+// connection to the origin, whose signer the actor does not trust.
+func assertUnlistedDenied(t *testing.T, dataplane e2e.AtenetDataplane, status int, body []byte) {
+	t.Helper()
+	if !dataplane.IsEgressPolicyDenied(status, string(body)) || strings.Contains(string(body), "x509") {
 		t.Fatalf("fetch of a host outside the policy returned HTTP %d, want an egress-policy denial; body: %s", status, body)
 	}
 }
