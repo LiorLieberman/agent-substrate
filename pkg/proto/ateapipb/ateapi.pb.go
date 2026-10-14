@@ -2178,6 +2178,13 @@ type WorkerAssignment struct {
 	//
 	// +k8s:optional
 	SandboxRuntime *SandboxRuntime `protobuf:"bytes,9,opt,name=sandbox_runtime,json=sandboxRuntime,proto3" json:"sandbox_runtime,omitempty"`
+	// worker_spiffe_id is the SPIFFE ID worker_pod's certificate carries, copied
+	// from Worker.worker_spiffe_id.
+	//
+	// +k8s:optional
+	// +k8s:maxLength=2048
+	// +k8s:customValidation # a SPIFFE ID
+	WorkerSpiffeId string `protobuf:"bytes,10,opt,name=worker_spiffe_id,json=workerSpiffeId,proto3" json:"worker_spiffe_id,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2273,6 +2280,13 @@ func (x *WorkerAssignment) GetSandboxRuntime() *SandboxRuntime {
 		return x.SandboxRuntime
 	}
 	return nil
+}
+
+func (x *WorkerAssignment) GetWorkerSpiffeId() string {
+	if x != nil {
+		return x.WorkerSpiffeId
+	}
+	return ""
 }
 
 // TagStatus is the server-owned state of a Tag.
@@ -7191,6 +7205,14 @@ type Worker struct {
 	// +k8s:customValidation # until `format=k8s-ip` is supported
 	// +k8s:immutable
 	Ips []string `protobuf:"bytes,7,rep,name=ips,proto3" json:"ips,omitempty"`
+	// worker_spiffe_id is the SPIFFE ID the worker pod's certificate carries.
+	// atenet-router requires it on the certificate of the worker's atunnel.
+	//
+	// +k8s:optional
+	// +k8s:maxLength=2048
+	// +k8s:customValidation # a SPIFFE ID
+	// +k8s:immutable
+	WorkerSpiffeId string `protobuf:"bytes,13,opt,name=worker_spiffe_id,json=workerSpiffeId,proto3" json:"worker_spiffe_id,omitempty"`
 	// sandbox_class mirrors the WorkerPool's default sandbox class
 	//
 	// +k8s:optional
@@ -7309,6 +7331,13 @@ func (x *Worker) GetIps() []string {
 		return x.Ips
 	}
 	return nil
+}
+
+func (x *Worker) GetWorkerSpiffeId() string {
+	if x != nil {
+		return x.WorkerSpiffeId
+	}
+	return ""
 }
 
 func (x *Worker) GetSandboxClass() string {
@@ -9447,7 +9476,7 @@ const file_ateapi_proto_rawDesc = "" +
 	"ActorCrash\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x129\n" +
 	"\n" +
-	"crash_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\tcrashTime\"\xf5\x02\n" +
+	"crash_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\tcrashTime\"\x9f\x03\n" +
 	"\x10WorkerAssignment\x12)\n" +
 	"\x06worker\x18\x06 \x01(\v2\x11.ateapi.ObjectRefR\x06worker\x12)\n" +
 	"\x10worker_namespace\x18\x01 \x01(\tR\x0fworkerNamespace\x12\x1f\n" +
@@ -9459,7 +9488,9 @@ const file_ateapi_proto_rawDesc = "" +
 	"\x0eworker_pod_ips\x18\x05 \x03(\tR\fworkerPodIps\x12\x1b\n" +
 	"\tnode_name\x18\a \x01(\tR\bnodeName\x12!\n" +
 	"\fworker_epoch\x18\b \x01(\x03R\vworkerEpoch\x12?\n" +
-	"\x0fsandbox_runtime\x18\t \x01(\v2\x16.ateapi.SandboxRuntimeR\x0esandboxRuntime\"g\n" +
+	"\x0fsandbox_runtime\x18\t \x01(\v2\x16.ateapi.SandboxRuntimeR\x0esandboxRuntime\x12(\n" +
+	"\x10worker_spiffe_id\x18\n" +
+	" \x01(\tR\x0eworkerSpiffeId\"g\n" +
 	"\tTagStatus\x12,\n" +
 	"\bsnapshot\x18\x01 \x01(\v2\x10.ateapi.SnapshotR\bsnapshot\x12,\n" +
 	"\x12actor_template_uid\x18\x02 \x01(\tR\x10actorTemplateUid\"\xd2\x01\n" +
@@ -9699,7 +9730,7 @@ const file_ateapi_proto_rawDesc = "" +
 	"\aoptions\x18\x02 \x01(\v2\x13.ateapi.ListOptionsR\aoptions\"c\n" +
 	"\x12ListActorsResponse\x12%\n" +
 	"\x06actors\x18\x01 \x03(\v2\r.ateapi.ActorR\x06actors\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xe7\x03\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\x91\x04\n" +
 	"\x06Worker\x124\n" +
 	"\bmetadata\x18\x01 \x01(\v2\x18.ateapi.ResourceMetadataR\bmetadata\x12)\n" +
 	"\x10worker_namespace\x18\x02 \x01(\tR\x0fworkerNamespace\x12\x1f\n" +
@@ -9709,7 +9740,8 @@ const file_ateapi_proto_rawDesc = "" +
 	"worker_pod\x18\x04 \x01(\tR\tworkerPod\x12$\n" +
 	"\x0eworker_pod_uid\x18\x05 \x01(\tR\fworkerPodUid\x12\x1b\n" +
 	"\tnode_name\x18\x06 \x01(\tR\bnodeName\x12\x10\n" +
-	"\x03ips\x18\a \x03(\tR\x03ips\x12#\n" +
+	"\x03ips\x18\a \x03(\tR\x03ips\x12(\n" +
+	"\x10worker_spiffe_id\x18\r \x01(\tR\x0eworkerSpiffeId\x12#\n" +
 	"\rsandbox_class\x18\b \x01(\tR\fsandboxClass\x122\n" +
 	"\x06labels\x18\t \x03(\v2\x1a.ateapi.Worker.LabelsEntryR\x06labels\x12\x14\n" +
 	"\x05epoch\x18\f \x01(\x03R\x05epoch\x12,\n" +

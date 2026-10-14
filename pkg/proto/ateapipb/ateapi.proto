@@ -1007,6 +1007,14 @@ message WorkerAssignment {
   //
   // +k8s:optional
   SandboxRuntime sandbox_runtime = 9;
+
+  // worker_spiffe_id is the SPIFFE ID worker_pod's certificate carries, copied
+  // from Worker.worker_spiffe_id.
+  //
+  // +k8s:optional
+  // +k8s:maxLength=2048
+  // +k8s:customValidation # a SPIFFE ID
+  string worker_spiffe_id = 10;
 }
 
 // TagStatus is the server-owned state of a Tag.
@@ -2281,6 +2289,14 @@ message Worker {
   // +k8s:customValidation # until `format=k8s-ip` is supported
   // +k8s:immutable
   repeated string ips = 7;
+  // worker_spiffe_id is the SPIFFE ID the worker pod's certificate carries.
+  // atenet-router requires it on the certificate of the worker's atunnel.
+  //
+  // +k8s:optional
+  // +k8s:maxLength=2048
+  // +k8s:customValidation # a SPIFFE ID
+  // +k8s:immutable
+  string worker_spiffe_id = 13;
 
   // sandbox_class mirrors the WorkerPool's default sandbox class
   //
