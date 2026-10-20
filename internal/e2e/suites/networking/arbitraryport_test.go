@@ -17,11 +17,14 @@ package networking
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -95,17 +98,25 @@ func TestActorArbitraryPortAccess(t *testing.T) {
 	})
 
 	t.Run("tunnels to different ports do not cross", func(t *testing.T) {
-		// A reset kills a port-forward and the held tunnel with it, so each
-		// attempt gets its own. Retry transport errors, never a wrong port.
-		const attempts = 3
-		var err error
-		for i := 1; i <= attempts; i++ {
-			if err = checkTunnelsDoNotCross(t, ctx, actorRef); err == nil {
-				return
-			}
-			t.Logf("attempt %d of %d: %v", i, attempts, err)
+		// Two streams on one connection are handled by the same Envoy worker,
+		// and the held tunnel keeps its upstream connection open while the
+		// second tunnel opens.
+		ctx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		cc := dialConnectH2(t, ctx, router)
+		defer cc.Close()
+
+		held := connectH2(t, ctx, cc, actorRef, 80)
+		defer held.Close()
+		if body := getThroughTunnel(t, held, actorRef.Name); !counterDefaultPortIPPattern.MatchString(body) {
+			t.Fatalf("tunnel to port 80 got %q, want the default port's response", body)
 		}
-		t.Fatalf("tunnels to port %d failed %d times: %v", counterExtraPort, attempts, err)
+
+		extra := connectH2(t, ctx, cc, actorRef, counterExtraPort)
+		defer extra.Close()
+		if body := getThroughTunnel(t, extra, actorRef.Name); !strings.Contains(body, "extra port 9090") {
+			t.Fatalf("tunnel to port %d got %q, want the extra port's response", counterExtraPort, body)
+		}
 	})
 
 	t.Run("unlisted port rejected", func(t *testing.T) {
@@ -208,57 +219,76 @@ func waitForTunneledRouteReady(t *testing.T, ctx context.Context, router *e2e.Ro
 	}
 }
 
-// crossTunnels is how many short tunnels follow the held one. The bug crossed
-// about 1 in 10.
-const crossTunnels = 6
-
-// checkTunnelsDoNotCross holds an idle tunnel to the default port, then checks
-// that each new tunnel to the extra port gets that port's response. It returns
-// transport errors and fails the test on a wrong response.
-func checkTunnelsDoNotCross(t *testing.T, ctx context.Context, actorRef resources.ActorRef) error {
+// dialConnectH2 opens one HTTP/2 connection to the router's CONNECT listener.
+// The TLS listener offers no ALPN, so there too HTTP/2 starts without
+// negotiation, and Envoy recognizes it from the first bytes.
+func dialConnectH2(t *testing.T, ctx context.Context, router *e2e.RouterClient) *http.ClientConn {
 	t.Helper()
-	router := mustRouterClient(t, ctx)
-	defer router.Close()
-
-	held, err := router.Connect(ctx, actorRef, 80)
+	address, err := router.ConnectAddress(ctx)
 	if err != nil {
-		return fmt.Errorf("CONNECT to the default port: %w", err)
+		t.Fatal(err)
 	}
-	defer held.Close()
-	held.SetDeadline(time.Now().Add(time.Minute))
-	if _, err := fmt.Fprintf(held, "GET / HTTP/1.1\r\nHost: %s\r\n\r\n", actorRef.Name); err != nil {
-		return fmt.Errorf("writing request on the held tunnel: %w", err)
+	protocols := new(http.Protocols)
+	protocols.SetUnencryptedHTTP2(true)
+	transport := &http.Transport{Protocols: protocols}
+	if tlsConfig := router.TLSConfig(); tlsConfig != nil {
+		transport.DialContext = (&tls.Dialer{Config: tlsConfig}).DialContext
 	}
-	heldResp, err := http.ReadResponse(bufio.NewReader(held), nil)
+	cc, err := transport.NewClientConn(ctx, "http", address)
 	if err != nil {
-		return fmt.Errorf("reading response on the held tunnel: %w", err)
+		t.Fatalf("opening an HTTP/2 connection to the router's CONNECT listener: %v", err)
 	}
-	io.Copy(io.Discard, heldResp.Body)
-	heldResp.Body.Close()
-
-	for i := range crossTunnels {
-		conn, err := router.Connect(ctx, actorRef, counterExtraPort)
-		if err != nil {
-			return fmt.Errorf("CONNECT %d to port %d: %w", i, counterExtraPort, err)
-		}
-		resp, body, err := requestTunneled(conn, actorRef.Name)
-		closeTunnel(conn)
-		if err != nil {
-			return fmt.Errorf("request %d through the tunnel to port %d: %w", i, counterExtraPort, err)
-		}
-		if resp.StatusCode != http.StatusOK || !strings.Contains(body, "extra port 9090") {
-			t.Fatalf("request %d through the tunnel to port %d got HTTP %d, body %q, want the extra port's response", i, counterExtraPort, resp.StatusCode, body)
-		}
-	}
-	return nil
+	return cc
 }
 
-// closeTunnel drains the tunnel before closing it. Closing one the router has
-// already closed can reset, and so kill, the port-forward.
-func closeTunnel(conn net.Conn) {
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
-	io.Copy(io.Discard, conn)
-	conn.Close()
+// connectH2 opens a CONNECT tunnel to port on actorRef as a new stream on cc.
+// Writes go out in the request body and reads come from the response body.
+func connectH2(t *testing.T, ctx context.Context, cc *http.ClientConn, actorRef resources.ActorRef, port int) io.ReadWriteCloser {
+	t.Helper()
+	body, writer := io.Pipe()
+	destination := net.JoinHostPort(actorRef.Name, strconv.Itoa(port))
+	req := (&http.Request{
+		Method:        http.MethodConnect,
+		URL:           &url.URL{Host: destination},
+		Host:          destination,
+		Header:        http.Header{atenet.TargetActorHeader: []string{actorRef.String()}},
+		Body:          body,
+		ContentLength: -1,
+	}).WithContext(ctx)
+	resp, err := cc.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("CONNECT to port %d: %v", port, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("CONNECT to port %d returned HTTP %d", port, resp.StatusCode)
+	}
+	return struct {
+		io.Writer
+		io.ReadCloser
+	}{writer, resp.Body}
+}
+
+// getThroughTunnel sends GET / through tunnel and returns the body of a 200
+// response, leaving the tunnel open.
+func getThroughTunnel(t *testing.T, tunnel io.ReadWriter, host string) string {
+	t.Helper()
+	if _, err := fmt.Fprintf(tunnel, "GET / HTTP/1.1\r\nHost: %s\r\n\r\n", host); err != nil {
+		t.Fatalf("writing a request through the tunnel: %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(tunnel), nil)
+	if err != nil {
+		t.Fatalf("reading the response through the tunnel: %v", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatalf("reading the response body through the tunnel: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("request through the tunnel returned HTTP %d: %s", resp.StatusCode, body)
+	}
+	return string(body)
 }
 
 func requestTunneled(conn interface {
