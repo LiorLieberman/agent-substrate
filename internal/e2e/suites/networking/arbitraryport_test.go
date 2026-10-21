@@ -57,6 +57,8 @@ func TestActorArbitraryPortAccess(t *testing.T) {
 	ctx := context.Background()
 	_, actorName, _ := createAndResumeSubstrateActor(t, ctx, "arbitraryport", e2e.SubstrateCounterFixture())
 	actorRef := resources.ActorRef{Atespace: networkingAtespace, Name: actorName}
+	// A tunnel that ends in an error, such as a reset, ends the whole
+	// port-forward it went through, so each later subtest opens its own.
 	router := mustRouterClient(t, ctx)
 	defer router.Close()
 
@@ -103,6 +105,8 @@ func TestActorArbitraryPortAccess(t *testing.T) {
 		// second tunnel opens.
 		ctx, cancel := context.WithTimeout(ctx, time.Minute)
 		defer cancel()
+		router := mustRouterClient(t, ctx)
+		defer router.Close()
 		cc := dialConnectH2(t, ctx, router)
 		defer cc.Close()
 
@@ -126,6 +130,8 @@ func TestActorArbitraryPortAccess(t *testing.T) {
 		// fails to dial the actor and reports it as an HTTP error, rather
 		// than the connection hanging or a request through it succeeding.
 		const unlistedPort = 6553
+		router := mustRouterClient(t, ctx)
+		defer router.Close()
 		conn, err := router.Connect(ctx, actorRef, unlistedPort)
 		if err != nil {
 			t.Fatalf("CONNECT to an unlisted port unexpectedly failed to establish: %v", err)
@@ -156,6 +162,8 @@ func TestActorArbitraryPortAccess(t *testing.T) {
 		headers := http.Header{
 			atenet.TargetActorHeader: []string{actorRef.String(), "untrusted/actor"},
 		}
+		router := mustRouterClient(t, ctx)
+		defer router.Close()
 		conn, err := router.ConnectWithHeaders(ctx, actorRef, counterExtraPort, headers)
 		if err != nil {
 			// A rejected CONNECT handshake is a valid rejection.
@@ -220,8 +228,9 @@ func waitForTunneledRouteReady(t *testing.T, ctx context.Context, router *e2e.Ro
 }
 
 // dialConnectH2 opens one HTTP/2 connection to the router's CONNECT listener.
-// The TLS listener offers no ALPN, so there too HTTP/2 starts without
-// negotiation, and Envoy recognizes it from the first bytes.
+// That listener offers no ALPN, so net/http gets the TLS connection as if it
+// were plaintext, to start HTTP/2 without negotiation; Envoy recognizes it
+// from the first bytes.
 func dialConnectH2(t *testing.T, ctx context.Context, router *e2e.RouterClient) *http.ClientConn {
 	t.Helper()
 	address, err := router.ConnectAddress(ctx)
@@ -230,9 +239,9 @@ func dialConnectH2(t *testing.T, ctx context.Context, router *e2e.RouterClient) 
 	}
 	protocols := new(http.Protocols)
 	protocols.SetUnencryptedHTTP2(true)
-	transport := &http.Transport{Protocols: protocols}
-	if tlsConfig := router.TLSConfig(); tlsConfig != nil {
-		transport.DialContext = (&tls.Dialer{Config: tlsConfig}).DialContext
+	transport := &http.Transport{
+		Protocols:   protocols,
+		DialContext: (&tls.Dialer{Config: router.TLSConfig()}).DialContext,
 	}
 	cc, err := transport.NewClientConn(ctx, "http", address)
 	if err != nil {
