@@ -144,6 +144,11 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 	if err != nil {
 		return err
 	}
+	if e.Cfg.SkipAtenetRouter {
+		if err := e.removeAtenetRouter(ctx); err != nil {
+			return err
+		}
+	}
 	// Before the bundle, which starts ate-controller on the real data plane.
 	if err := e.removeFakeWorkersync(ctx); err != nil {
 		return err
@@ -182,10 +187,12 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 		rollout{kube.KindDeployment, "ate-api-server"},
 		rollout{kube.KindDeployment, "ate-idp-server"},
 		rollout{kube.KindDeployment, "ate-controller"},
-		rollout{kube.KindDeployment, "atenet-router"},
 		rollout{kube.KindDeployment, "atenet-egress"},
 		rollout{kube.KindDaemonSet, "atelet"},
 	)
+	if !e.Cfg.SkipAtenetRouter {
+		waits = append(waits, rollout{kube.KindDeployment, atenetRouterDeployment})
+	}
 	if provider.Kubernetes() {
 		waits = append(waits, rollout{kube.KindDeployment, k8sCredentialProviderDeployment})
 	}
@@ -530,7 +537,8 @@ func (e *Env) ateletManifestPath() string {
 	return e.Cfg.Manifest("atelet.yaml")
 }
 
-// DeployAtenet redeploys the atenet dataplane: router and egress.
+// DeployAtenet redeploys the atenet dataplane: router and egress. Under
+// --skip-atenet-router it removes the router instead.
 func (e *Env) DeployAtenet(ctx context.Context) error {
 	log.Step("deploy_atenet")
 
@@ -554,11 +562,12 @@ func (e *Env) DeployAtenet(ctx context.Context) error {
 		return err
 	}
 
-	routerManifest, err := e.renderAtenetRouterManifest(ctx)
-	if err != nil {
-		return err
+	if e.Cfg.SkipAtenetRouter {
+		err = e.removeAtenetRouter(ctx)
+	} else {
+		err = e.applyAtenetRouter(ctx)
 	}
-	if err := e.Kube.ApplyBytes(ctx, routerManifest); err != nil {
+	if err != nil {
 		return err
 	}
 	if err := e.EnsureEgressMITMCAPoolSecret(ctx); err != nil {
@@ -576,7 +585,10 @@ func (e *Env) DeployAtenet(ctx context.Context) error {
 		return err
 	}
 
-	deployments := []string{"atenet-router", "atenet-egress"}
+	deployments := []string{"atenet-egress"}
+	if !e.Cfg.SkipAtenetRouter {
+		deployments = append(deployments, atenetRouterDeployment)
+	}
 	if provider.Kubernetes() {
 		deployments = append(deployments, k8sCredentialProviderDeployment)
 	}

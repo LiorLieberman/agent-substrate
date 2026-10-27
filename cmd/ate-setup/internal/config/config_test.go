@@ -70,6 +70,7 @@ func loadEnv(t *testing.T) {
 		"ATE_INSTALL_KIND",
 		"ATE_INSTALL_PODCERT_WORKERS_PER_SIGNER",
 		"ATE_INSTALL_ROLLOUT_TIMEOUT",
+		"ATE_INSTALL_SKIP_ATENET_ROUTER",
 		"ATE_OTLP_ENDPOINT",
 		"ATE_PREVIEW",
 		"BENCHMARK_ACTOR_MEMORY",
@@ -248,6 +249,31 @@ func TestLoadFakeDataPlane(t *testing.T) {
 	}
 }
 
+func TestLoadSkipAtenetRouter(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts Options
+		env  string
+		want bool
+	}{
+		{name: "off by default"},
+		{name: "flag", opts: Options{SkipAtenetRouter: true}, want: true},
+		{name: "environment", env: "true", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			loadEnv(t)
+			t.Setenv("ATE_INSTALL_SKIP_ATENET_ROUTER", tc.env)
+			cfg, err := Load(tc.opts)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.SkipAtenetRouter != tc.want {
+				t.Errorf("SkipAtenetRouter = %v, want %v", cfg.SkipAtenetRouter, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadIngressAllowedSPIFFEIDs(t *testing.T) {
 	const a, b = "spiffe://cluster.local/ns/a/sa/a", "spiffe://cluster.local/ns/b/sa/b"
 	for _, tc := range []struct {
@@ -288,7 +314,7 @@ func TestLoadIngressAllowedSPIFFEIDs(t *testing.T) {
 }
 
 // Only the Envoy router authenticates clients against the allowlist, and it
-// refuses to start without one.
+// refuses to start without one. An install without the router needs none.
 func TestRequireIngressAllowedSPIFFEIDs(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -298,6 +324,7 @@ func TestRequireIngressAllowedSPIFFEIDs(t *testing.T) {
 		{name: "envoy without IDs", cfg: Config{Router: RouterEnvoy}, wantErr: true},
 		{name: "envoy with IDs", cfg: Config{Router: RouterEnvoy, IngressAllowedSPIFFEIDs: []string{"spiffe://cluster.local/ns/a/sa/a"}}},
 		{name: "agentgateway without IDs", cfg: Config{Router: RouterAgentgateway}},
+		{name: "envoy without IDs or a router", cfg: Config{Router: RouterEnvoy, SkipAtenetRouter: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.cfg.RequireIngressAllowedSPIFFEIDs()

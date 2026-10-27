@@ -218,6 +218,10 @@ to contact any actor.  Richer authorization policies may be added post-GA.  Use
 the `--ingress-allowed-spiffe-ids` flag to set the allowlist (comma-separated
 list).
 
+An install that needs no ingress, because its actors pull their work and other
+controllers resume them through ateapi, can leave the router out with
+`ate-setup --skip-atenet-router`.
+
 ### Common setups
 
 The default install sets `--ingress-client-ca-file` to the trust bundle of

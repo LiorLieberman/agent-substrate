@@ -276,6 +276,7 @@ func buildConfig(root string, env map[string]string, r *Resolved) (*Config, erro
 		CordonControlPlane:             r.Bool("cordonControlPlane"),
 		FakeDataPlane:                  r.Bool("fakeDataPlane.enabled"),
 		IngressAllowedSPIFFEIDs:        splitList(r.String("ingressAllowedSPIFFEIDs")),
+		SkipAtenetRouter:               r.Bool("atenet.router.skip"),
 		AdditionalEgressExtprocService: r.String("atenet.egress.additionalExtprocService"),
 		CredentialProviderJSON:         r.String("atenet.egress.credentialProvider"),
 		AnthropicAPIKey:                r.String("demo.anthropicAPIKey"),

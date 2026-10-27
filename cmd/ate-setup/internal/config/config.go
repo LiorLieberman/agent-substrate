@@ -220,6 +220,10 @@ type Config struct {
 	// See RequireIngressAllowedSPIFFEIDs.
 	IngressAllowedSPIFFEIDs []string
 
+	// SkipAtenetRouter installs without the ingress router, and removes one
+	// an earlier install left (ATE_INSTALL_SKIP_ATENET_ROUTER).
+	SkipAtenetRouter bool
+
 	// AdditionalEgressExtprocService is the optional NS/SVC:PORT external processor filter.
 	AdditionalEgressExtprocService string
 
@@ -280,9 +284,9 @@ func (c *Config) Resolved() *Resolved {
 // Envoy ingress router without an allowlist. That router authenticates
 // clients on its TLS listeners, and refuses to start with no SPIFFE ID to
 // match them against. The agentgateway router is configured statically and
-// takes none.
+// takes none, and --skip-atenet-router deploys no router at all.
 func (c *Config) RequireIngressAllowedSPIFFEIDs() error {
-	if c.Router == RouterAgentgateway || len(c.IngressAllowedSPIFFEIDs) > 0 {
+	if c.Router == RouterAgentgateway || c.SkipAtenetRouter || len(c.IngressAllowedSPIFFEIDs) > 0 {
 		return nil
 	}
 	return c.Resolved().Require("ingressAllowedSPIFFEIDs")

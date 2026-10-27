@@ -310,6 +310,13 @@ var Registry = []Setting{
 			"--atenet-dataplane=envoy. The podidentity signer issues spiffe://cluster.local/ns/<namespace>/sa/<service-account>",
 	},
 	{
+		Key: "atenet.router.skip", Env: "ATE_INSTALL_SKIP_ATENET_ROUTER", Flag: "skip-atenet-router",
+		Kind: KindBool, Default: "false",
+		Usage: "Install without the atenet ingress router, and remove one an earlier install left, for installs " +
+			"where nothing reaches actors through it: actors pull their work, and other controllers resume them " +
+			"through ateapi. --ingress-allowed-spiffe-ids is then not needed",
+	},
+	{
 		Key: "otlpEndpoint", Env: "ATE_OTLP_ENDPOINT", Flag: "otlp-endpoint", Kind: KindString,
 		Usage: "Send control plane telemetry to this OTLP collector instead of the cluster default",
 	},

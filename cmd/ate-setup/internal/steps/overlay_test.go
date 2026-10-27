@@ -1433,14 +1433,18 @@ func TestRequireInstalledDataPlane(t *testing.T) {
 }
 
 // fakeDeleteKube is fakeKube with a dynamic client and discovery for the
-// built-in kinds in fake-workersync's manifest, so DeletePath runs. typed
-// seeds the typed client, which the Deployment checks read; dyn seeds the
-// dynamic client, which DeletePath deletes through.
+// built-in kinds in fake-workersync's and the router's manifests, so deletes
+// run. typed seeds the typed client, which the Deployment checks read; dyn
+// seeds the dynamic client, which deletes go through.
 func fakeDeleteKube(t *testing.T, typed []runtime.Object, dyn []runtime.Object) (*kube.Client, *dynamicfake.FakeDynamicClient) {
 	t.Helper()
 	cs := fake.NewClientset(typed...)
 	cs.Fake.Resources = []*metav1.APIResourceList{
-		{GroupVersion: "v1", APIResources: []metav1.APIResource{{Name: "serviceaccounts", Kind: "ServiceAccount", Namespaced: true}}},
+		{GroupVersion: "v1", APIResources: []metav1.APIResource{
+			{Name: "serviceaccounts", Kind: "ServiceAccount", Namespaced: true},
+			{Name: "configmaps", Kind: "ConfigMap", Namespaced: true},
+			{Name: "services", Kind: "Service", Namespaced: true},
+		}},
 		{GroupVersion: "apps/v1", APIResources: []metav1.APIResource{{Name: "deployments", Kind: "Deployment", Namespaced: true}}},
 		{GroupVersion: "networking.k8s.io/v1", APIResources: []metav1.APIResource{{Name: "networkpolicies", Kind: "NetworkPolicy", Namespaced: true}}},
 		{GroupVersion: "rbac.authorization.k8s.io/v1", APIResources: []metav1.APIResource{

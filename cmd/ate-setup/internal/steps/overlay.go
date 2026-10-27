@@ -142,7 +142,11 @@ func (e *Env) renderSystemManifests(ctx context.Context) ([]byte, error) {
 	if manifest, err = setIDPServerIssuer(manifest, e.Cfg.ActorJWTIssuer); err != nil {
 		return nil, err
 	}
-	if e.Cfg.Router != config.RouterAgentgateway {
+	if e.Cfg.SkipAtenetRouter {
+		if manifest, err = withoutAtenetRouter(manifest); err != nil {
+			return nil, err
+		}
+	} else if e.Cfg.Router != config.RouterAgentgateway {
 		manifest, err = e.patchAtenetRouterAllowedSPIFFEIDs(manifest)
 		if err != nil {
 			return nil, err
@@ -197,6 +201,13 @@ func (e *Env) renderAtenetEgressManifest(ctx context.Context, provider config.Cr
 		raw, err := e.render(e.Cfg.Path(installDir + "/agentgateway-egress"))
 		if err != nil {
 			return nil, err
+		}
+		// The agentgateway component it shares with the router carries the
+		// router's config too.
+		if e.Cfg.SkipAtenetRouter {
+			if raw, err = withoutAtenetRouter(raw); err != nil {
+				return nil, err
+			}
 		}
 		raw, err = patchAgentgatewayEgressInject(raw, provider)
 		if err != nil {
