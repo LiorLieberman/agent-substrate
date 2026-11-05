@@ -16,6 +16,7 @@ package controllers
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1172,6 +1173,35 @@ func TestBuildDeploymentPreview(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("--preview args mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// Only an annotated microVM pool passes --netless, since a worker exits on a
+// flag it does not know.
+func TestBuildDeploymentNetless(t *testing.T) {
+	netless := map[string]string{atev1.WorkerPoolNetlessAnnotation: "true"}
+	for _, tc := range []struct {
+		name        string
+		class       atev1.SandboxClass
+		annotations map[string]string
+		want        bool
+	}{
+		{name: "not annotated", class: atev1.SandboxClassMicroVM},
+		{name: "annotated", class: atev1.SandboxClassMicroVM, annotations: netless, want: true},
+		{name: "annotated false", class: atev1.SandboxClassMicroVM, annotations: map[string]string{atev1.WorkerPoolNetlessAnnotation: "false"}},
+		{name: "annotated gvisor pool", class: atev1.SandboxClassGvisor, annotations: netless},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wp := testWorkerPoolApplyConfig(nil)
+			wp.Annotations = tc.annotations
+			wp.Spec.SandboxClasses = []atev1.WorkerPoolSandboxClass{{Name: tc.class}}
+			c := buildDeploymentApplyConfig(wp, workerOTelSettings{},
+				installdefaults.SystemNamespace, installdefaults.AteletServiceAccount, installdefaults.RouterServiceAccount, egresspolicy.DNSEgressPolicyEnforceInAtunnel).
+				Spec.Template.Spec.Containers[0]
+			if got := slices.Contains(c.Args, "--netless"); got != tc.want {
+				t.Errorf("--netless passed = %v, want %v (args %q)", got, tc.want, c.Args)
 			}
 		})
 	}

@@ -168,6 +168,12 @@ func buildDeploymentApplyConfig(wp *atev1.WorkerPool, otel workerOTelSettings, s
 	previewArg := "--preview=" + strings.Join(enabledGates(), ",")
 	args = append(args, previewArg)
 
+	// Passed only on opt-in, and only to the microVM worker, since a worker
+	// exits on a flag it does not know.
+	if wp.Annotations[atev1.WorkerPoolNetlessAnnotation] == "true" && wp.Spec.DefaultSandboxClass() == atev1.SandboxClassMicroVM {
+		args = append(args, "--netless")
+	}
+
 	containerAC := corev1ac.Container().
 		WithName("worker").
 		WithImage(wp.Spec.WorkerImage).
