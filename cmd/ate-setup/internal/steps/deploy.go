@@ -30,6 +30,7 @@ import (
 	"go.ate.dev/substrate/cmd/ate-setup/internal/config"
 	"go.ate.dev/substrate/cmd/ate-setup/internal/kube"
 	"go.ate.dev/substrate/cmd/ate-setup/internal/log"
+	"go.ate.dev/substrate/internal/preview"
 )
 
 // crdGVK is the kind of a CustomResourceDefinition.
@@ -100,6 +101,14 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 	var microvmPrep *microVMPrepared
 	if microvm {
 		microvmPrep, err = e.prepareMicroVMDeps(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	gvisorNetless := gvisor && previewGateEnabled(e.Cfg.PreviewGates, preview.GateNetlessGVisor)
+	var gvisorNetlessBucket string
+	if gvisorNetless {
+		gvisorNetlessBucket, err = e.prepareGVisorNetless(ctx)
 		if err != nil {
 			return err
 		}
@@ -186,6 +195,11 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 	}
 	if err := e.applyAtenetEgress(ctx, providers); err != nil {
 		return err
+	}
+	if gvisorNetless {
+		if err := e.applyGVisorNetlessSandboxConfig(ctx, gvisorNetlessBucket); err != nil {
+			return err
+		}
 	}
 	if microvmPrep != nil {
 		if err := e.applyMicroVMSandboxConfig(ctx, microvmPrep); err != nil {
@@ -603,8 +617,9 @@ func (e *Env) DeployAtenet(ctx context.Context) error {
 	return nil
 }
 
-// DeploySandboxConfig applies the SandboxConfig admission policy and the
-// default SandboxConfigs selected by sandboxClasses.
+// DeploySandboxConfig applies the SandboxConfig admission policy, the default
+// SandboxConfigs selected by sandboxClasses, and the netless ones the preview
+// gates enable.
 func (e *Env) DeploySandboxConfig(ctx context.Context, sandboxClasses string) error {
 	log.Step("deploy_sandboxconfig")
 
@@ -619,12 +634,25 @@ func (e *Env) DeploySandboxConfig(ctx context.Context, sandboxClasses string) er
 			return err
 		}
 	}
+	gvisorNetless := gvisor && previewGateEnabled(e.Cfg.PreviewGates, preview.GateNetlessGVisor)
+	var gvisorNetlessBucket string
+	if gvisorNetless {
+		gvisorNetlessBucket, err = e.prepareGVisorNetless(ctx)
+		if err != nil {
+			return err
+		}
+	}
 
 	if err := e.EnsureCRDs(ctx); err != nil {
 		return err
 	}
 	if err := e.applyInitialSandboxConfigs(ctx, gvisor); err != nil {
 		return err
+	}
+	if gvisorNetless {
+		if err := e.applyGVisorNetlessSandboxConfig(ctx, gvisorNetlessBucket); err != nil {
+			return err
+		}
 	}
 	if microvmPrep != nil {
 		return e.applyMicroVMSandboxConfig(ctx, microvmPrep)

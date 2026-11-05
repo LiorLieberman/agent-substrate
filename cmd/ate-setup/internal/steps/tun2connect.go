@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"slices"
 
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
@@ -27,6 +26,7 @@ import (
 	atev1 "go.ate.dev/substrate/api/infra/k8s/ate/v1"
 	"go.ate.dev/substrate/cmd/ate-setup/internal/kube"
 	"go.ate.dev/substrate/cmd/ate-setup/internal/log"
+	"go.ate.dev/substrate/internal/preview"
 )
 
 const (
@@ -40,6 +40,9 @@ const (
 	// microvmNetlessSandboxConfigName is the SandboxConfig a netless microVM
 	// WorkerPool names in configRef.
 	microvmNetlessSandboxConfigName = "microvm-netless"
+	// gvisorNetlessSandboxConfigName is the SandboxConfig a netless gVisor
+	// WorkerPool names in configRef.
+	gvisorNetlessSandboxConfigName = "gvisor-netless"
 )
 
 // tun2connectSHA256 pins the reproducible build of hack/tools/tun2connect. A
@@ -81,21 +84,21 @@ func (e *Env) buildTun2connect(ctx context.Context, arch string) error {
 	return nil
 }
 
-// netlessSandboxConfig is the rendered microvm SandboxConfig, renamed, with
-// tun2connect in every version. Its bundle hash keeps netless snapshots apart.
-func netlessSandboxConfig(rendered []byte, scheme, bucket string) ([]byte, error) {
+// netlessSandboxConfig is the SandboxConfig in rendered, named name, with
+// tun2connect in every version and no class default for other pools to take.
+func netlessSandboxConfig(rendered []byte, name, scheme, bucket string) ([]byte, error) {
 	objs, err := kube.DecodeManifestBytes(rendered)
 	if err != nil {
 		return nil, err
 	}
 	if len(objs) != 1 {
-		return nil, fmt.Errorf("the microvm SandboxConfig decoded to %d objects, want 1", len(objs))
+		return nil, fmt.Errorf("the SandboxConfig for %s decoded to %d objects, want 1", name, len(objs))
 	}
 	var sc atev1.SandboxConfig
 	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(objs[0].Object, &sc); err != nil {
-		return nil, fmt.Errorf("decoding the microvm SandboxConfig: %w", err)
+		return nil, fmt.Errorf("decoding the SandboxConfig for %s: %w", name, err)
 	}
-	sc.Name = microvmNetlessSandboxConfigName
+	sc.Name = name
 	delete(sc.Annotations, atev1.SandboxConfigClassDefaultAnnotation)
 	for i := range sc.Spec.Versions {
 		for arch, assets := range sc.Spec.Versions[i].Assets {
@@ -112,12 +115,67 @@ func netlessSandboxConfig(rendered []byte, scheme, bucket string) ([]byte, error
 	return yaml.Marshal(&sc)
 }
 
-// stagedMicroVMFiles are the files under bin/microvm-assets/<arch>/ to stage
-// for one arch: the microvm assets, and tun2connect once it is built.
-func stagedMicroVMFiles(digests map[string]string) []string {
-	files := microvmAssets
-	if _, ok := digests[tun2connectAsset]; ok {
-		files = append(slices.Clone(files), tun2connectAsset)
+// tun2connectDigests is the asset digests of tun2connect alone, by arch, for
+// staging it without the microVM assets.
+func tun2connectDigests(arches []string) map[string]map[string]string {
+	digests := make(map[string]map[string]string, len(arches))
+	for _, arch := range arches {
+		digests[arch] = map[string]string{tun2connectAsset: tun2connectSHA256[arch]}
 	}
-	return files
+	return digests
+}
+
+// prepareGVisorNetless builds tun2connect and, off Kind, uploads it to the
+// microVM assets' bucket, which it returns, before the cluster is touched.
+func (e *Env) prepareGVisorNetless(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	log.Step("prepare_gvisor_netless")
+
+	bucket, err := e.checkMicroVMDeps()
+	if err != nil {
+		return "", fmt.Errorf("the %s preview stages tun2connect with the microVM assets: %w", preview.GateNetlessGVisor, err)
+	}
+	for _, arch := range e.microVMArches() {
+		if err := e.buildTun2connect(ctx, arch); err != nil {
+			return "", err
+		}
+	}
+	if !e.Cfg.Kind {
+		log.Infof("Uploading tun2connect to gs://%s/%s/ ...", bucket, microvmAssetsPrefix)
+		if err := e.stageMicroVMAssetsToGCS(ctx, bucket, tun2connectDigests(e.microVMArches())); err != nil {
+			return "", err
+		}
+	}
+	return bucket, nil
+}
+
+// applyGVisorNetlessSandboxConfig stages tun2connect into in-cluster rustfs on
+// Kind and applies the gvisor-netless SandboxConfig.
+func (e *Env) applyGVisorNetlessSandboxConfig(ctx context.Context, bucket string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	log.Step("deploy_gvisor_netless_sandboxconfig")
+
+	if e.Cfg.Kind {
+		log.Infof("Staging tun2connect to in-cluster rustfs bucket %s (%s/)...", bucket, microvmAssetsPrefix)
+		if err := e.stageMicroVMAssetsToRustfs(ctx, bucket, tun2connectDigests(e.microVMArches())); err != nil {
+			return err
+		}
+	}
+	gvisor, err := os.ReadFile(e.Cfg.Manifest("sandboxconfig-gvisor.yaml"))
+	if err != nil {
+		return err
+	}
+	netless, err := netlessSandboxConfig(gvisor, gvisorNetlessSandboxConfigName, e.microVMBucketScheme(), bucket)
+	if err != nil {
+		return err
+	}
+	if err := e.Kube.ApplyBytes(ctx, netless); err != nil {
+		return err
+	}
+	log.Infof("Installed the %s SandboxConfig for netless gVisor WorkerPools.", gvisorNetlessSandboxConfigName)
+	return nil
 }

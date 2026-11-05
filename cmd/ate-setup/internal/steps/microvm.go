@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -222,7 +224,7 @@ func (e *Env) applyMicroVMSandboxConfig(ctx context.Context, prep *microVMPrepar
 	}
 	log.Infof("Done. Installed cluster-wide microvm SandboxConfig.")
 	if previewGateEnabled(e.Cfg.PreviewGates, preview.GateNetlessMicroVM) {
-		netless, err := netlessSandboxConfig(rendered, e.microVMBucketScheme(), prep.bucket)
+		netless, err := netlessSandboxConfig(rendered, microvmNetlessSandboxConfigName, e.microVMBucketScheme(), prep.bucket)
 		if err != nil {
 			return err
 		}
@@ -674,7 +676,7 @@ func (e *Env) stageMicroVMAssetsToRustfs(ctx context.Context, bucket string, dig
 	log.Infof(">> Uploading assets to %s via %s (netns of %s)...", prefixURL, endpoint, node)
 	for _, arch := range e.microVMArches() {
 		outDir := e.Cfg.Path("bin", microvmAssetsPrefix, arch)
-		for _, f := range stagedMicroVMFiles(digests[arch]) {
+		for _, f := range slices.Sorted(maps.Keys(digests[arch])) {
 			sha := digests[arch][f]
 			key := fmt.Sprintf("%s/%s/%s", microvmAssetsPrefix, arch, sha)
 			if existing[key] {
@@ -733,7 +735,7 @@ func (e *Env) stageMicroVMAssetsToGCS(ctx context.Context, bucket string, digest
 
 	for _, arch := range e.microVMArches() {
 		outDir := e.Cfg.Path("bin", microvmAssetsPrefix, arch)
-		for _, f := range stagedMicroVMFiles(digests[arch]) {
+		for _, f := range slices.Sorted(maps.Keys(digests[arch])) {
 			sha := digests[arch][f]
 			dst := fmt.Sprintf("gs://%s/%s/%s/%s", bucket, microvmAssetsPrefix, arch, sha)
 			if existing[dst] {
