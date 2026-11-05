@@ -37,3 +37,16 @@ func WriteRootfsEtcFiles(rootfs, hostname string) error {
 	}
 	return WriteRootfsHosts(rootfs, SandboxHosts(hostname, ActorVethIP))
 }
+
+// Tun2connectResolver is where tun2connect answers DNS in the guest of an
+// actor with no network card.
+const Tun2connectResolver = "100.127.255.253"
+
+// WriteNetlessRootfsEtcFiles is WriteRootfsEtcFiles for a netless actor. It
+// leaves out search domains, which tun2connect would carry into its CONNECTs.
+func WriteNetlessRootfsEtcFiles(rootfs, hostname string) error {
+	if err := WriteRootfsResolvConf(rootfs, []byte("nameserver "+Tun2connectResolver+"\n")); err != nil {
+		return err
+	}
+	return WriteRootfsHosts(rootfs, SandboxHosts(hostname, "127.0.0.1"))
+}

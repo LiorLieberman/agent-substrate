@@ -170,7 +170,8 @@ func buildDeploymentApplyConfig(wp *atev1.WorkerPool, otel workerOTelSettings, s
 
 	// Passed only on opt-in, and only to the microVM worker, since a worker
 	// exits on a flag it does not know.
-	if wp.Annotations[atev1.WorkerPoolNetlessAnnotation] == "true" && wp.Spec.DefaultSandboxClass() == atev1.SandboxClassMicroVM {
+	netless := wp.Annotations[atev1.WorkerPoolNetlessAnnotation] == "true" && wp.Spec.DefaultSandboxClass() == atev1.SandboxClassMicroVM
+	if netless {
 		args = append(args, "--netless")
 	}
 
@@ -194,7 +195,7 @@ func buildDeploymentApplyConfig(wp *atev1.WorkerPool, otel workerOTelSettings, s
 			WithHTTPGet(corev1ac.HTTPGetAction().
 				WithPath("/readyz").
 				WithPort(intstr.FromString("readyz")))).
-		WithSecurityContext(workerSecurityContext(wp.Spec.DefaultSandboxClass())).
+		WithSecurityContext(workerSecurityContext(wp.Spec.DefaultSandboxClass(), netless)).
 		WithEnv(workerContainerEnv(otel)...).
 		WithVolumeMounts(
 			corev1ac.VolumeMount().
@@ -265,7 +266,7 @@ func buildDeploymentApplyConfig(wp *atev1.WorkerPool, otel workerOTelSettings, s
 
 	applyWorkerPoolPodTemplate(podSpecAC, containerAC, wp.Spec.Template)
 	applySandboxClassToleration(podSpecAC, wp.Spec.DefaultSandboxClass())
-	maybeApplyMicroVMPodShape(podSpecAC, containerAC, wp.Spec.DefaultSandboxClass())
+	maybeApplyMicroVMPodShape(podSpecAC, containerAC, wp.Spec.DefaultSandboxClass(), netless)
 	podSpecAC.WithContainers(containerAC)
 	podSpecAC.WithTerminationGracePeriodSeconds(workerTerminationGracePeriodSeconds)
 
@@ -424,11 +425,20 @@ var workerMicroVMCapabilities = []corev1.Capability{
 	"FOWNER", "CHOWN", "MKNOD", "SETFCAP", "FSETID", "SETPCAP",
 }
 
+// workerCapabilities is caps without NET_ADMIN for a netless pool, whose
+// worker builds no tap for its actors.
+func workerCapabilities(caps []corev1.Capability, netless bool) []corev1.Capability {
+	if !netless {
+		return caps
+	}
+	return slices.DeleteFunc(slices.Clone(caps), func(c corev1.Capability) bool { return c == "NET_ADMIN" })
+}
+
 // workerSecurityContext returns the worker container security context for a sandbox
 // class. Neither class runs privileged; they differ in their capability set.
 // Both declare seccomp Unconfined because their sandbox child pivot_root()s,
 // which the default profile denies. An empty class defaults to gVisor.
-func workerSecurityContext(class atev1.SandboxClass) *corev1ac.SecurityContextApplyConfiguration {
+func workerSecurityContext(class atev1.SandboxClass, netless bool) *corev1ac.SecurityContextApplyConfiguration {
 	// Both runtimes mount inside the worker — runsc pivots root and the worker
 	// remounts /sys/fs/cgroup to nest per-actor cgroups; the micro-VM worker
 	// shares /run/kata-containers and remounts /proc/sys — and the default
@@ -456,7 +466,7 @@ func workerSecurityContext(class atev1.SandboxClass) *corev1ac.SecurityContextAp
 		return sc.
 			WithCapabilities(corev1ac.Capabilities().
 				WithDrop("ALL").
-				WithAdd(workerMicroVMCapabilities...)).
+				WithAdd(workerCapabilities(workerMicroVMCapabilities, netless)...)).
 			WithSeccompProfile(corev1ac.SeccompProfile().
 				WithType(corev1.SeccompProfileTypeUnconfined))
 	}
@@ -486,6 +496,7 @@ func maybeApplyMicroVMPodShape(
 	podSpecAC *corev1ac.PodSpecApplyConfiguration,
 	containerAC *corev1ac.ContainerApplyConfiguration,
 	sandboxClass atev1.SandboxClass,
+	netless bool,
 ) {
 	if sandboxClass != atev1.SandboxClassMicroVM {
 		return
@@ -513,6 +524,9 @@ func maybeApplyMicroVMPodShape(
 	// Advertising tun as a resource would only add a placement constraint that
 	// can fail: it is not scarce, and a node where the tun module has yet to
 	// load would refuse a worker that needs nothing from it.
+	if netless {
+		return
+	}
 	containerAC.WithVolumeMounts(corev1ac.VolumeMount().
 		WithName(tunDeviceVolume).
 		WithMountPath(tunDevicePath))

@@ -17,9 +17,11 @@
 package kata
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"path/filepath"
 	"testing"
@@ -101,5 +103,46 @@ func TestReseedRandomDevReturnsAgentError(t *testing.T) {
 	defer cancel()
 	if err := ac.ReseedRandomDev(ctx, []byte("nonce")); err == nil {
 		t.Fatal("ReseedRandomDev returned nil for an agent error, want the error")
+	}
+}
+
+// serveHybridVsock answers one hybrid-vsock CONNECT on a fresh socket with
+// reply, then writes after, and returns the socket's path.
+func serveHybridVsock(t *testing.T, reply, after string) string {
+	t.Helper()
+	sock := filepath.Join(t.TempDir(), "clh.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, err := bufio.NewReader(conn).ReadString('\n'); err != nil {
+			return
+		}
+		_, _ = io.WriteString(conn, reply+after)
+	}()
+	return sock
+}
+
+// What the guest sends right after the VMM's reply is the caller's: the
+// ingress answer from tun2connect can arrive in the same read as the OK.
+func TestDialVsockKeepsTheStreamAfterTheReply(t *testing.T) {
+	sock := serveHybridVsock(t, "OK 1073741825\n", "HTTP/1.1 200 OK\r\n\r\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := DialVsock(ctx, sock, 1028)
+	if err != nil {
+		t.Fatalf("DialVsock: %v", err)
+	}
+	defer conn.Close()
+	got, err := io.ReadAll(conn)
+	if err != nil || string(got) != "HTTP/1.1 200 OK\r\n\r\n" {
+		t.Errorf("stream after the reply = %q, %v, want the guest's bytes", got, err)
 	}
 }

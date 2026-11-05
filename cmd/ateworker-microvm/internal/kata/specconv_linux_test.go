@@ -17,6 +17,7 @@
 package kata
 
 import (
+	"os"
 	"slices"
 	"testing"
 
@@ -192,5 +193,22 @@ func TestSpecToAgentPB_ForwardsCwd(t *testing.T) {
 	got := SpecToAgentPB(&specs.Spec{Process: &specs.Process{Cwd: "/work"}})
 	if got.GetProcess().GetCwd() != "/work" {
 		t.Fatalf("Process.Cwd = %q, want /work", got.GetProcess().GetCwd())
+	}
+}
+
+// The agent creates the device nodes it is sent; tun2connect cannot open
+// /dev/net/tun without its entry.
+func TestSpecToAgentPB_ForwardsDevices(t *testing.T) {
+	mode := os.FileMode(0o666)
+	var root uint32
+	got := SpecToAgentPB(&specs.Spec{Linux: &specs.Linux{Devices: []specs.LinuxDevice{
+		{Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, FileMode: &mode, UID: &root, GID: &root},
+	}}})
+	devices := got.GetLinux().GetDevices()
+	if len(devices) != 1 {
+		t.Fatalf("Linux.Devices = %v, want /dev/net/tun", devices)
+	}
+	if d := devices[0]; d.Path != "/dev/net/tun" || d.Type != "c" || d.Major != 10 || d.Minor != 200 || d.FileMode != 0o666 {
+		t.Errorf("device = %v, want /dev/net/tun c 10:200 0666", d)
 	}
 }

@@ -1203,6 +1203,16 @@ func TestBuildDeploymentNetless(t *testing.T) {
 			if got := slices.Contains(c.Args, "--netless"); got != tc.want {
 				t.Errorf("--netless passed = %v, want %v (args %q)", got, tc.want, c.Args)
 			}
+			// A netless worker builds no tap, so it gets neither NET_ADMIN nor the tun device.
+			if got := slices.Contains(c.SecurityContext.Capabilities.Add, "NET_ADMIN"); got == tc.want {
+				t.Errorf("NET_ADMIN granted = %v, want %v", got, !tc.want)
+			}
+			if tc.class == atev1.SandboxClassMicroVM {
+				tun := slices.ContainsFunc(c.VolumeMounts, func(m corev1ac.VolumeMountApplyConfiguration) bool { return *m.MountPath == tunDevicePath })
+				if tun == tc.want {
+					t.Errorf("tun device mounted = %v, want %v", tun, !tc.want)
+				}
+			}
 		})
 	}
 }

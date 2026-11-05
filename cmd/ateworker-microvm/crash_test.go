@@ -90,3 +90,30 @@ func TestWatchVMIgnoresAReplacedVM(t *testing.T) {
 	default:
 	}
 }
+
+// A tun2connect exiting during teardown is no crash either.
+func TestWatchVMIgnoresTun2connectAtTeardown(t *testing.T) {
+	reporter := &fakeCrashReporter{reports: make(chan string, 1)}
+	s := &AteWorkerService{locks: actorlock.New(), actors: map[string]*hostedActor{}, crashReporter: reporter}
+	ra := fakeVM(t)
+	ra.chProc = ra.vfsdProc
+	exited := make(chan string, 1)
+	exited <- "exit status 0"
+	ra.tun2connectExited = exited
+	ra.stopping.Store(true)
+	done := make(chan struct{})
+	go func() {
+		s.watchVM(resources.ActorAttribution{UID: "actor-a"}, nil, ra)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("watchVM did not return when tun2connect exited")
+	}
+	select {
+	case msg := <-reporter.reports:
+		t.Fatalf("reported %q for a VM being torn down", msg)
+	default:
+	}
+}

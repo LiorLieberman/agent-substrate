@@ -130,3 +130,24 @@ func TestWriteRootfsHosts(t *testing.T) {
 		t.Errorf("wrote %q, want %q", got, want)
 	}
 }
+
+// A netless actor asks tun2connect for every name, with no search domain to
+// leak into the CONNECT, and finds its own name on loopback.
+func TestWriteNetlessRootfsEtcFiles(t *testing.T) {
+	rootfs := t.TempDir()
+	if err := WriteNetlessRootfsEtcFiles(rootfs, "actor"); err != nil {
+		t.Fatalf("WriteNetlessRootfsEtcFiles: %v", err)
+	}
+	for name, want := range map[string]string{
+		"resolv.conf": "nameserver 100.127.255.253\n",
+		"hosts":       "# Agent Substrate-managed hosts file.\n127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n127.0.0.1\tactor\n",
+	} {
+		got, err := os.ReadFile(filepath.Join(rootfs, "etc", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}

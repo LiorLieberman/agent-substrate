@@ -19,6 +19,7 @@ package kata
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -97,9 +98,18 @@ type AgentClient struct {
 }
 
 // DialAgent connects to the kata-agent through the hybrid-vsock socket at
-// vsockPath (VsockSocketPath(id)): plain-text "CONNECT <port>" handshake with
-// the VMM, then ttrpc over the stream.
+// vsockPath (VsockSocketPath(id)), then speaks ttrpc over the stream.
 func DialAgent(ctx context.Context, vsockPath string) (*AgentClient, error) {
+	conn, err := DialVsock(ctx, vsockPath, agentVsockPort)
+	if err != nil {
+		return nil, err
+	}
+	return &AgentClient{conn: conn, client: ttrpc.NewClient(conn)}, nil
+}
+
+// DialVsock connects to a guest vsock port through the VMM's hybrid vsock
+// socket at vsockPath. ctx bounds only the CONNECT handshake.
+func DialVsock(ctx context.Context, vsockPath string, port uint32) (net.Conn, error) {
 	d := net.Dialer{}
 	conn, err := d.DialContext(ctx, "unix", vsockPath)
 	if err != nil {
@@ -110,11 +120,11 @@ func DialAgent(ctx context.Context, vsockPath string) (*AgentClient, error) {
 	} else {
 		_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	}
-	if _, err := fmt.Fprintf(conn, "CONNECT %d\n", agentVsockPort); err != nil {
+	if _, err := fmt.Fprintf(conn, "CONNECT %d\n", port); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("hybrid vsock CONNECT: %w", err)
 	}
-	line, err := bufio.NewReader(conn).ReadString('\n')
+	line, err := readReplyLine(conn)
 	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("hybrid vsock CONNECT response: %w", err)
@@ -123,8 +133,25 @@ func DialAgent(ctx context.Context, vsockPath string) (*AgentClient, error) {
 		conn.Close()
 		return nil, fmt.Errorf("hybrid vsock CONNECT refused: %q", strings.TrimSpace(line))
 	}
-	_ = conn.SetDeadline(time.Time{}) // ttrpc manages its own timeouts via ctx
-	return &AgentClient{conn: conn, client: ttrpc.NewClient(conn)}, nil
+	_ = conn.SetDeadline(time.Time{})
+	return conn, nil
+}
+
+// readReplyLine reads the VMM's one-line reply a byte at a time, so whatever
+// the guest sends right after it stays in the stream for the caller.
+func readReplyLine(r io.Reader) (string, error) {
+	var line []byte
+	b := make([]byte, 1)
+	for len(line) < 64 {
+		if _, err := io.ReadFull(r, b); err != nil {
+			return string(line), err
+		}
+		line = append(line, b[0])
+		if b[0] == '\n' {
+			return string(line), nil
+		}
+	}
+	return string(line), errors.New("reply line too long")
 }
 
 // Close shuts the ttrpc client and underlying connection.

@@ -37,9 +37,9 @@ type crashReporter interface {
 
 var _ crashReporter = (*register.CrashReporter)(nil)
 
-// watchVM handles the actor's VMM or virtiofsd dying while nothing is tearing
-// them down: the actor is torn down here, since the control plane will not
-// reach this worker for it again, and then reported crashed.
+// watchVM handles the actor's VMM, virtiofsd or tun2connect dying while
+// nothing is tearing them down: the actor is torn down here, since the control
+// plane will not reach this worker for it again, and then reported crashed.
 func (s *AteWorkerService) watchVM(attribution resources.ActorAttribution, actorDirs *ateworkerpb.ActorDirs, ra *runningActor) {
 	what, exit := "cloud-hypervisor", ""
 	select {
@@ -47,6 +47,8 @@ func (s *AteWorkerService) watchVM(attribution resources.ActorAttribution, actor
 		exit = ra.chProc.Exit()
 	case <-ra.vfsdProc.Done():
 		what, exit = "virtiofsd", ra.vfsdProc.Exit()
+	case exit = <-ra.tun2connectExited:
+		what = "tun2connect"
 	}
 	if ra.stopping.Load() || s.shuttingDown.Load() {
 		return
