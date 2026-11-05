@@ -155,6 +155,36 @@ func TestCheckSnapshotNetwork(t *testing.T) {
 	}
 }
 
+// The router and the wakeup probe dial the actor's usual address. Only its
+// port reaches tun2connect, and a refusal fails the dial.
+func TestTun2connectIngressDialer(t *testing.T) {
+	tests := []struct {
+		name    string
+		answer  string
+		wantErr bool
+	}{
+		{name: "allowed", answer: "HTTP/1.1 200 OK\r\n\r\n"},
+		{name: "port not pinned", answer: "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sock, requests := serveTun2connectIngress(t, tc.answer)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			conn, err := tun2connectIngressDialer(sock)(ctx, "tcp", "169.254.17.2:8080")
+			if conn != nil {
+				_ = conn.Close()
+			}
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("dial error = %v, want error %v", err, tc.wantErr)
+			}
+			if got := receiveRequest(t, requests); got != "CONNECT 127.0.0.1:8080" {
+				t.Errorf("tun2connect got %q, want CONNECT 127.0.0.1:8080", got)
+			}
+		})
+	}
+}
+
 func TestCheckTun2connectAsset(t *testing.T) {
 	tests := []struct {
 		name    string

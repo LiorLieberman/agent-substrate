@@ -35,6 +35,7 @@ import (
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 
 	"go.ate.dev/substrate/cmd/ateworker-microvm/internal/kata"
+	"go.ate.dev/substrate/internal/atunnel/ingress"
 	"go.ate.dev/substrate/internal/ocispec"
 	"go.ate.dev/substrate/internal/proto/ateworkerpb"
 )
@@ -209,6 +210,30 @@ func dialTun2connectIngress(ctx context.Context, vsockPath string, port uint32) 
 	}
 	_ = conn.SetDeadline(time.Time{})
 	return &readerConn{Conn: conn, reader: reader}, resp, nil
+}
+
+// tun2connectIngressDialer dials a netless actor through tun2connect, for
+// ingress and the wakeup probe. The guest has no address: only the port counts.
+func tun2connectIngressDialer(vsockPath string) ingress.DialFunc {
+	return func(ctx context.Context, _, address string) (net.Conn, error) {
+		_, portText, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		port, err := strconv.ParseUint(portText, 10, 16)
+		if err != nil || port == 0 {
+			return nil, fmt.Errorf("invalid port in %q", address)
+		}
+		conn, resp, err := dialTun2connectIngress(ctx, vsockPath, uint32(port))
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			_ = conn.Close()
+			return nil, fmt.Errorf("tun2connect refused ingress to port %d: %s", port, resp.Status)
+		}
+		return conn, nil
+	}
 }
 
 // readerConn reads through the buffer that held the answer's head, so stream

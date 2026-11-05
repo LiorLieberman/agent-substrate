@@ -19,10 +19,6 @@ VM boots with no network card. An in-guest producer,
 to atunnel over vsock as an HTTP `CONNECT name:port`. See
 [Network Egress](network-egress.md).
 
-> [!IMPORTANT]
-> This is work in progress. Egress works. Ingress and wakeup probes do not
-> reach the actor yet.
-
 ## Enabling it
 
 1. Run Substrate with `--preview=NetlessMicroVM` (ate-setup's `preview`
@@ -72,6 +68,10 @@ that names a host.
   actor's certificate.
 - The gateway decides on the SNI or the Host as it does for every actor. It
   never resolves or dials the name in the CONNECT.
+- Ingress and the wakeup probe go the other way: the worker connects to guest
+  vsock port 1028 through `clh.sock`, and asks tun2connect for
+  `CONNECT 127.0.0.1:<port>`, which tun2connect joins to the actor's port on
+  loopback. The actor has to listen on loopback, or on all addresses.
 
 ## One switch per WorkerPool
 
@@ -94,6 +94,8 @@ their MEMORY snapshots either way.
 ## Limitations
 
 - TCP only. tun2connect answers DNS itself and drops other UDP.
+- Ingress reaches only port 80 and the containers' wakeup probe ports.
+  tun2connect takes the ports it lets ingress reach as a list, with no range.
 - The DNS relay's policy check does not apply. The gateway's decision by name
   is the only check.
 - Nothing restarts tun2connect if it exits, and the actor keeps running with no

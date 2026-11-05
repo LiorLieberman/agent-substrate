@@ -225,8 +225,12 @@ func (s *AteWorkerService) sandboxNetNS(actorUID string) netns.Handle {
 	return hosted.network.Network.GatewayNetNS
 }
 
-// sandboxDialer connects through the actor's gateway namespace.
+// sandboxDialer connects through the actor's gateway namespace, or through
+// tun2connect's ingress for a netless actor.
 func (s *AteWorkerService) sandboxDialer(actorUID string) ingress.DialFunc {
+	if s.netless {
+		return tun2connectIngressDialer(kata.VsockSocketPath(actorUID))
+	}
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		s.actorsMu.RLock()
 		hosted := s.actors[actorUID]
