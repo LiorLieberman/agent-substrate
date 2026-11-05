@@ -489,6 +489,9 @@ func (s *AteWorkerService) teardownActor(ctx context.Context, id string, actorDi
 	if err := os.RemoveAll(rootfsUpperDir(actorDirs)); err != nil {
 		slog.WarnContext(ctx, "Failed to remove rootfs upper dir", slog.String("actorUID", id), slog.Any("err", err))
 	}
+	if s.netless {
+		removeTun2connectRootfs(ctx, actorDirs)
+	}
 
 	// Detach the bundle rootfs overlays composed in buildActorContainers, so
 	// atelet's bundle wipe doesn't strand live mounts in this namespace.

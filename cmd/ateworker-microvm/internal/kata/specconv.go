@@ -32,7 +32,8 @@ const DefaultCPUPeriodUS = 100000
 // config.json is lowercase.
 //
 // Only the fields the kata-agent needs to create + start a container are mapped
-// (process, root, mounts, linux namespaces/resources/cgroup/masked+readonly paths).
+// (process, root, mounts, linux namespaces/devices/resources/cgroup/masked+readonly
+// paths).
 // The container rootfs is provided out-of-band as storages; the caller sets the
 // returned spec's Root.Path to the overlay mount point.
 func SpecToAgentPB(s *specs.Spec) *agentpb.Spec {
@@ -111,6 +112,19 @@ func SpecToAgentPB(s *specs.Spec) *agentpb.Spec {
 				continue
 			}
 			l.Namespaces = append(l.Namespaces, &agentpb.LinuxNamespace{Type: string(ns.Type)})
+		}
+		for _, d := range s.Linux.Devices {
+			dev := &agentpb.LinuxDevice{Path: d.Path, Type: d.Type, Major: d.Major, Minor: d.Minor}
+			if d.FileMode != nil {
+				dev.FileMode = uint32(*d.FileMode)
+			}
+			if d.UID != nil {
+				dev.UID = *d.UID
+			}
+			if d.GID != nil {
+				dev.GID = *d.GID
+			}
+			l.Devices = append(l.Devices, dev)
 		}
 		if r := s.Linux.Resources; r != nil {
 			res := &agentpb.LinuxResources{}

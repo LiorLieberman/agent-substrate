@@ -42,6 +42,7 @@ import (
 	"go.ate.dev/substrate/cmd/ate-setup/internal/kube"
 	"go.ate.dev/substrate/cmd/ate-setup/internal/log"
 	"go.ate.dev/substrate/cmd/ate-setup/internal/render"
+	"go.ate.dev/substrate/internal/preview"
 )
 
 const (
@@ -171,6 +172,15 @@ func (e *Env) prepareMicroVMDeps(ctx context.Context) (*microVMPrepared, error) 
 		}
 	}
 
+	if previewGateEnabled(e.Cfg.PreviewGates, preview.GateNetlessMicroVM) {
+		for _, arch := range e.microVMArches() {
+			if err := e.buildTun2connect(ctx, arch); err != nil {
+				return nil, err
+			}
+			digests[arch][tun2connectAsset] = tun2connectSHA256[arch]
+		}
+	}
+
 	if !e.Cfg.Kind {
 		log.Infof("Uploading assets to gs://%s/%s/ ...", bucket, microvmAssetsPrefix)
 		if err := e.stageMicroVMAssetsToGCS(ctx, bucket, digests); err != nil {
@@ -211,6 +221,16 @@ func (e *Env) applyMicroVMSandboxConfig(ctx context.Context, prep *microVMPrepar
 		return err
 	}
 	log.Infof("Done. Installed cluster-wide microvm SandboxConfig.")
+	if previewGateEnabled(e.Cfg.PreviewGates, preview.GateNetlessMicroVM) {
+		netless, err := netlessSandboxConfig(rendered, e.microVMBucketScheme(), prep.bucket)
+		if err != nil {
+			return err
+		}
+		if err := e.Kube.ApplyBytes(ctx, netless); err != nil {
+			return err
+		}
+		log.Infof("Installed the %s SandboxConfig for netless microVM WorkerPools.", microvmNetlessSandboxConfigName)
+	}
 	return nil
 }
 
@@ -654,7 +674,7 @@ func (e *Env) stageMicroVMAssetsToRustfs(ctx context.Context, bucket string, dig
 	log.Infof(">> Uploading assets to %s via %s (netns of %s)...", prefixURL, endpoint, node)
 	for _, arch := range e.microVMArches() {
 		outDir := e.Cfg.Path("bin", microvmAssetsPrefix, arch)
-		for _, f := range microvmAssets {
+		for _, f := range stagedMicroVMFiles(digests[arch]) {
 			sha := digests[arch][f]
 			key := fmt.Sprintf("%s/%s/%s", microvmAssetsPrefix, arch, sha)
 			if existing[key] {
@@ -713,7 +733,7 @@ func (e *Env) stageMicroVMAssetsToGCS(ctx context.Context, bucket string, digest
 
 	for _, arch := range e.microVMArches() {
 		outDir := e.Cfg.Path("bin", microvmAssetsPrefix, arch)
-		for _, f := range microvmAssets {
+		for _, f := range stagedMicroVMFiles(digests[arch]) {
 			sha := digests[arch][f]
 			dst := fmt.Sprintf("gs://%s/%s/%s/%s", bucket, microvmAssetsPrefix, arch, sha)
 			if existing[dst] {

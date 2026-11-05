@@ -15,7 +15,7 @@
 // limitations under the License.
 
 // The paths ateworker-microvm derives from the ActorDirs atelet sends. The
-// directory under root_dir is ateworker-microvm's own: atelet does not know it.
+// directories under root_dir are its own: atelet does not know them.
 
 package main
 
@@ -35,4 +35,10 @@ func ociBundlePath(actorDirs *ateworkerpb.ActorDirs, containerName string) strin
 // this binary: atelet never touches it, so it is not one of the ActorDirs.
 func rootfsUpperDir(actorDirs *ateworkerpb.ActorDirs) string {
 	return filepath.Join(actorDirs.GetRootDir(), "rootfs-upper")
+}
+
+// tun2connectRootfsDir holds a netless actor's tun2connect binary and the
+// mountpoints its spec needs.
+func tun2connectRootfsDir(actorDirs *ateworkerpb.ActorDirs) string {
+	return filepath.Join(actorDirs.GetRootDir(), "tun2connect-rootfs")
 }

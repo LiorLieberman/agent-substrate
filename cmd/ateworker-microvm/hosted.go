@@ -89,6 +89,11 @@ func (s *AteWorkerService) hostActor(ctx context.Context, attribution resources.
 		}
 	}
 
+	// A netless actor has no tap, so nothing on the host to put in a
+	// namespace: tun2connect in the guest reaches atunnel over vsock.
+	if s.netless {
+		return hosted, nil
+	}
 	// The tap and atunnel share a namespace; the guest owns the other end.
 	session, err := actornet.ServeSandbox(ctx, actornet.SandboxNetworkConfig{
 		ActorUID:   uid,

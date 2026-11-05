@@ -130,6 +130,9 @@ const (
 	assetKernel    = "kata-kernel"
 	assetImage     = "kata-image"
 	assetVirtiofsd = "virtiofsd"
+	// assetTun2connect is the static tun2connect binary a netless worker runs
+	// in each guest. Only a netless pool's SandboxConfig has it.
+	assetTun2connect = "tun2connect"
 
 	// guestImagePmemID names the virtio-pmem device that carries the guest
 	// image, in the VM config and so in every snapshot's config.json.
@@ -194,8 +197,9 @@ type actorContainer struct {
 // resolvedRuntime holds the concrete binary paths for a request, taken from fetched
 // runtime assets when present, else the process flags.
 type resolvedRuntime struct {
-	chBinary  string // path to the cloud-hypervisor binary
-	virtiofsd string // path to virtiofsd (overlay RO lower); "" => "virtiofsd" on PATH
+	chBinary    string // path to the cloud-hypervisor binary
+	virtiofsd   string // path to virtiofsd (overlay RO lower); "" => "virtiofsd" on PATH
+	tun2connect string // path to the tun2connect binary; "" when the pool has none
 }
 
 // firstNonEmpty returns the first non-empty string, or "" if all are empty.
@@ -212,8 +216,9 @@ func firstNonEmpty(vals ...string) string {
 // back to the flag.
 func (s *AteWorkerService) resolveRuntime(paths map[string]string) resolvedRuntime {
 	return resolvedRuntime{
-		chBinary:  firstNonEmpty(paths[assetCH], s.chBinary),
-		virtiofsd: paths[assetVirtiofsd],
+		chBinary:    firstNonEmpty(paths[assetCH], s.chBinary),
+		virtiofsd:   paths[assetVirtiofsd],
+		tun2connect: paths[assetTun2connect],
 	}
 }
 
@@ -224,7 +229,7 @@ func (s *AteWorkerService) resolveRuntime(paths map[string]string) resolvedRunti
 // one kataShared virtio-fs share. It drives the kata clh boot (vm.create kernel+image+fs,
 // add-net, vm.boot) and the post-boot setup the shim would otherwise do (agent
 // CreateSandbox + guest network config) before having the kata-agent assemble and
-// start each container.
+// start each container. A netless actor gets no add-net: tun2connect is its network.
 //
 // Contract with atelet:
 //   - The runtime assets (guest kernel, guest OS image, cloud-hypervisor, virtiofsd)
@@ -398,6 +403,9 @@ func (s *AteWorkerService) coldBootActor(ctx context.Context, p actorBootParams)
 		return fmt.Errorf("ateworker-microvm requires %q and %q asset paths", assetKernel, assetImage)
 	}
 	rr := s.resolveRuntime(paths)
+	if err := s.checkTun2connectAsset(rr); err != nil {
+		return err
+	}
 	egress, err := s.tunnel.PrepareEgress(ctx, p.attribution(), p.egressGateway)
 	if err != nil {
 		return err
@@ -545,22 +553,24 @@ func (s *AteWorkerService) coldBootActor(ctx context.Context, p actorBootParams)
 	}
 
 	// Network device: build the actor's tap and add a virtio-net to the created
-	// (pre-boot) VM with its FDs (SCM_RIGHTS).
-	tapFiles, err := setupActorTap(ctx, s.sandboxNetNS(actorUID), "tap0_kata", 1)
-	if err != nil {
-		return fmt.Errorf("while building tap: %w", err)
-	}
-	defer func() {
-		for _, f := range tapFiles {
-			_ = f.Close() // CH dups adopted FDs; ours always close.
+	// (pre-boot) VM with its FDs (SCM_RIGHTS). A netless actor gets none.
+	if !s.netless {
+		tapFiles, err := setupActorTap(ctx, s.sandboxNetNS(actorUID), "tap0_kata", 1)
+		if err != nil {
+			return fmt.Errorf("while building tap: %w", err)
 		}
-	}()
-	var fds []int
-	for _, f := range tapFiles {
-		fds = append(fds, int(f.Fd()))
-	}
-	if err := client.AddNetWithFDs(ctx, actorGuestMAC, 2*len(tapFiles), fds); err != nil {
-		return fmt.Errorf("while adding net device: %w", err)
+		defer func() {
+			for _, f := range tapFiles {
+				_ = f.Close() // CH dups adopted FDs; ours always close.
+			}
+		}()
+		var fds []int
+		for _, f := range tapFiles {
+			fds = append(fds, int(f.Fd()))
+		}
+		if err := client.AddNetWithFDs(ctx, actorGuestMAC, 2*len(tapFiles), fds); err != nil {
+			return fmt.Errorf("while adding net device: %w", err)
+		}
 	}
 
 	// Boot.
@@ -596,7 +606,7 @@ func (s *AteWorkerService) coldBootActor(ctx context.Context, p actorBootParams)
 	}()
 
 	// Post-boot kata-agent setup: sandbox, guest networking, start each container.
-	if err := s.startActorContainers(ctx, ac, actorUID, vsockPath, ctrs); err != nil {
+	if err := s.startActorContainers(ctx, ac, actorUID, vsockPath, ctrs, tun2connectIngressPorts(containers)); err != nil {
 		return err
 	}
 	tContainers := time.Now()
@@ -631,6 +641,9 @@ func (s *AteWorkerService) coldBootActor(ctx context.Context, p actorBootParams)
 	for _, c := range ctrs {
 		s.startActorLogForwarding(ac, attribution, c.id, c.name)
 		workloadIDs = append(workloadIDs, c.id)
+	}
+	if s.netless {
+		s.startActorLogForwarding(ac, attribution, tun2connectContainerID, tun2connectLogName)
 	}
 
 	// Publish the guest to GetWorkloadStats, past every error return above: a
@@ -673,7 +686,11 @@ func (s *AteWorkerService) buildActorContainers(actorUID string, actorDirs *atew
 		}
 		bundleRootfs := filepath.Join(bundle, "rootfs")
 		// Set guest DNS and hosts before serving the rootfs over virtio-fs, on boot and restore.
-		if err := actornet.WriteRootfsEtcFiles(bundleRootfs, ocispec.Hostname); err != nil {
+		writeEtcFiles := actornet.WriteRootfsEtcFiles
+		if s.netless {
+			writeEtcFiles = actornet.WriteNetlessRootfsEtcFiles
+		}
+		if err := writeEtcFiles(bundleRootfs, ocispec.Hostname); err != nil {
 			return nil, fmt.Errorf("while writing guest /etc files for %q: %w", cn, err)
 		}
 		ctrs[i] = actorContainer{
@@ -698,6 +715,11 @@ func (s *AteWorkerService) buildActorContainers(actorUID string, actorDirs *atew
 // demand-pages from it); the caller owns it (tracked on runningActor, killed
 // in teardownActor).
 func (s *AteWorkerService) stageMergedRootfs(ctx context.Context, rr resolvedRuntime, id string, actorDirs *ateworkerpb.ActorDirs, ctrs []actorContainer, containers []*ateworkerpb.Container, procAttr *syscall.SysProcAttr) (*child.Process, error) {
+	if s.netless {
+		if err := stageTun2connectRootfs(ctx, rr.tun2connect, id, actorDirs); err != nil {
+			return nil, err
+		}
+	}
 	upperBase := rootfsUpperDir(actorDirs)
 	for _, c := range ctrs {
 		if err := kata.StageMergedRootfs(ctx, c.bundleRootfs, upperBase, c.name, id, c.id); err != nil {
@@ -860,9 +882,10 @@ func buildFsConfigs(id string) []ch.FsConfig {
 
 // startActorContainers performs the post-boot kata-agent setup the shim normally
 // does at boot: establish the sandbox once (mounting the kataShared virtio-fs base),
-// configure guest networking (eth0 IP/MAC/MTU + routes) once, then start each
-// container on its own overlay rootfs. On failure it dumps guest diagnostics.
-func (s *AteWorkerService) startActorContainers(ctx context.Context, ac *kata.AgentClient, id, vsockPath string, ctrs []actorContainer) error {
+// configure guest networking (eth0 IP/MAC/MTU + routes, or tun2connect for a
+// netless actor) once, then start each container on its own overlay rootfs. On
+// failure it dumps guest diagnostics.
+func (s *AteWorkerService) startActorContainers(ctx context.Context, ac *kata.AgentClient, id, vsockPath string, ctrs []actorContainer, ingressPorts []uint32) error {
 	// Establish the agent sandbox + the kataShared virtio-fs mount (every
 	// container's merged rootfs, durable volumes, CSI volumes, and system-info
 	// volumes). All containers share it, so use the first container's hostname.
@@ -878,17 +901,24 @@ func (s *AteWorkerService) startActorContainers(ctx context.Context, ac *kata.Ag
 	}
 	tSandbox := time.Now()
 
-	// Configure guest networking (the shim's job): eth0 IP/MAC/MTU, routes, ARP.
-	mtu := uint64(actorTapMTUOf(ctx, s.sandboxNetNS(id), "tap0_kata"))
-	netCtx, netCancel := context.WithTimeout(ctx, 20*time.Second)
-	err = s.configureGuestNetwork(netCtx, ac, mtu)
-	netCancel()
-	if err != nil {
-		if s.guestDebug {
-			dump := kata.DebugConsoleDump(ctx, vsockPath, "ip addr 2>&1; echo '== route =='; ip route 2>&1; echo '== neigh =='; ip neigh 2>&1")
-			slog.ErrorContext(ctx, "guest network config failed; dump", slog.String("dump", dump))
+	if s.netless {
+		// tun2connect is the guest's network: it comes up before the actor.
+		if err := s.startTun2connect(ctx, ac, id, vsockPath, ingressPorts); err != nil {
+			return err
 		}
-		return fmt.Errorf("while configuring guest network: %w", err)
+	} else {
+		// Configure guest networking (the shim's job): eth0 IP/MAC/MTU, routes, ARP.
+		mtu := uint64(actorTapMTUOf(ctx, s.sandboxNetNS(id), "tap0_kata"))
+		netCtx, netCancel := context.WithTimeout(ctx, 20*time.Second)
+		err = s.configureGuestNetwork(netCtx, ac, mtu)
+		netCancel()
+		if err != nil {
+			if s.guestDebug {
+				dump := kata.DebugConsoleDump(ctx, vsockPath, "ip addr 2>&1; echo '== route =='; ip route 2>&1; echo '== neigh =='; ip neigh 2>&1")
+				slog.ErrorContext(ctx, "guest network config failed; dump", slog.String("dump", dump))
+			}
+			return fmt.Errorf("while configuring guest network: %w", err)
+		}
 	}
 
 	tNetwork := time.Now()

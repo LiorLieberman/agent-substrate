@@ -248,7 +248,8 @@ func (s *AteWorkerService) RestoreWorkload(ctx context.Context, req *ateworkerpb
 // actor's; re-materialize the uppers from the per-container tars (in the background,
 // overlapped with bundle preparation) and re-mount the merged trees at the frozen
 // find-paths paths; start the virtiofsd serving them; rebuild the tap (the snapshot's
-// virtio-net is fd-backed → fresh net_fds); relaunch CH with --restore (OnDemand),
+// virtio-net is fd-backed → fresh net_fds), which a netless actor has none of;
+// relaunch CH with --restore (OnDemand),
 // and resume. Guest RAM — the actor's in-memory state and the frozen network config —
 // comes back from the memory snapshot; the durable-dir volumes were restored by the
 // caller from their tar.
@@ -262,6 +263,9 @@ func (s *AteWorkerService) restoreMemoryFidelity(ctx context.Context, p actorBoo
 	}
 
 	rr := s.resolveRuntime(p.assetPaths)
+	if err := s.checkTun2connectAsset(rr); err != nil {
+		return err
+	}
 	egress, err := s.tunnel.PrepareEgress(ctx, p.attribution(), p.egressGateway)
 	if err != nil {
 		return err
@@ -290,6 +294,13 @@ func (s *AteWorkerService) restoreMemoryFidelity(ctx context.Context, p actorBoo
 	// this actor's own directory.
 	if err := rewriteSnapshotPaths(restoreDir, actorUID, kernel, image); err != nil {
 		return fmt.Errorf("while rewriting snapshot paths: %w", err)
+	}
+	netDevs, err := ch.SnapshotNetDevices(restoreDir)
+	if err != nil {
+		return fmt.Errorf("while reading snapshot net devices: %w", err)
+	}
+	if err := s.checkSnapshotNetwork(len(netDevs)); err != nil {
+		return err
 	}
 	srcID := actorUID
 	if b, rerr := os.ReadFile(filepath.Join(restoreDir, baseIDFile)); rerr == nil {
@@ -370,10 +381,6 @@ func (s *AteWorkerService) restoreMemoryFidelity(ctx context.Context, p actorBoo
 	// fd-backed, so CH needs fresh tap FDs (net_fds) on restore. The caller
 	// unhosts on failure, once the defers here have stopped the actor's
 	// processes.
-	netDevs, err := ch.SnapshotNetDevices(restoreDir)
-	if err != nil {
-		return fmt.Errorf("while reading snapshot net devices: %w", err)
-	}
 	var restoredNets []ch.RestoredNet
 	var tapFiles []*os.File
 	defer func() {
@@ -545,6 +552,9 @@ func (s *AteWorkerService) restoreMemoryFidelity(ctx context.Context, p actorBoo
 	for _, c := range ctrs {
 		s.startActorLogForwarding(guestAC, attribution, c.id, c.name)
 	}
+	if s.netless {
+		s.startActorLogForwarding(guestAC, attribution, tun2connectContainerID, tun2connectLogName)
+	}
 
 	if err := s.tunnel.ActivateIngress(p.attribution(), s.sandboxDialer(p.actorUID)); err != nil {
 		return err
@@ -589,6 +599,9 @@ func (s *AteWorkerService) cleanupFailedRestoreRootfs(ctx context.Context, actor
 	s.cleanupSandboxState(ctx, actorUID)
 	if err := os.RemoveAll(rootfsUpperDir(actorDirs)); err != nil {
 		slog.WarnContext(ctx, "Failed to remove rootfs upper dir after Restore failure", slog.String("actorUID", actorUID), slog.Any("err", err))
+	}
+	if s.netless {
+		removeTun2connectRootfs(ctx, actorDirs)
 	}
 	if err := imagecache.UnmountAllUnder(actorDirs.GetOciBundleDir()); err != nil {
 		slog.WarnContext(ctx, "Failed to unmount bundle rootfs overlays after Restore failure", slog.String("actorUID", actorUID), slog.Any("err", err))

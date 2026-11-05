@@ -120,6 +120,20 @@ func systemMounts() []specs.Mount {
 	}
 }
 
+// rlimits are the resource limits of every process Substrate starts in a
+// sandbox.
+func rlimits() []specs.POSIXRlimit {
+	return []specs.POSIXRlimit{
+		{
+			Type: "RLIMIT_NOFILE",
+			// NOTE: raised from 1024 because proxy-heavy actors ran out
+			// of sockets; 1048576 is the kernel's default fs.nr_open.
+			Hard: 1048576,
+			Soft: 1048576,
+		},
+	}
+}
+
 // Build returns a runtime-neutral OCI spec for an actor container.
 func Build(o Options) *specs.Spec {
 	container := o.Container
@@ -139,15 +153,7 @@ func Build(o Options) *specs.Spec {
 				//
 				// TODO(gvisor.dev/issue/3166): support ambient capabilities
 			},
-			Rlimits: []specs.POSIXRlimit{
-				{
-					Type: "RLIMIT_NOFILE",
-					// NOTE: raised from 1024 because proxy-heavy actors ran out
-					// of sockets; 1048576 is the kernel's default fs.nr_open.
-					Hard: 1048576,
-					Soft: 1048576,
-				},
-			},
+			Rlimits: rlimits(),
 		},
 		Root: &specs.Root{
 			Path:     "rootfs",
