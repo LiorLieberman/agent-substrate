@@ -82,6 +82,7 @@ var (
 	readinessListenAddress = pflag.String("readiness-listen-address", "0.0.0.0:8080", "Address for the HTTP /readyz and /healthz probes")
 	maxActors              = pflag.Int("max-actors", 1000, "How many actors this worker will host at once")
 	usageSampleInterval    = pflag.Duration("usage-sample-interval", time.Minute, "How often the ateworker samples the resource usage of its actors. Each sample writes an ate.actor.usage_sampled record per actor, and GetActiveWorkloadStats serves the latest.")
+	netless                = pflag.Bool("netless", false, "Boot actors with no network card. Needs the NetlessMicroVM preview gate.")
 )
 
 // minUsageSampleInterval is the floor of --usage-sample-interval, the same as
@@ -124,6 +125,9 @@ func do(ctx context.Context) error {
 	}
 	if *usageSampleInterval < minUsageSampleInterval {
 		return fmt.Errorf("--usage-sample-interval must be at least %v, got %v", minUsageSampleInterval, *usageSampleInterval)
+	}
+	if *netless && !preview.IsEnabled(preview.GateNetlessMicroVM) {
+		return fmt.Errorf("--netless needs the %s preview gate", preview.GateNetlessMicroVM)
 	}
 	bootID, err := bootid.Read(bootid.Path)
 	if err != nil {

@@ -250,6 +250,12 @@ const (
 	WorkerPoolReasonDefaultConfigNotFound = "DefaultConfigNotFound"
 )
 
+// WorkerPoolNetlessAnnotation, set to "true" on a microVM WorkerPool, boots
+// every actor placed on the pool with no network card. It needs the
+// NetlessMicroVM preview gate: without it, the pool's workers refuse to start.
+// Pools of other sandbox classes ignore it.
+const WorkerPoolNetlessAnnotation = "workerpool.ate.dev/netless"
+
 // WorkerPool is the Schema for the workerpools API
 // +genclient
 // +kubebuilder:object:generate=true
