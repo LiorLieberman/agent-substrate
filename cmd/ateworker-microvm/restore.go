@@ -300,6 +300,11 @@ func (s *AteWorkerService) restoreMemoryFidelity(ctx context.Context, p actorBoo
 	if err := os.MkdirAll(kata.VMDir(actorUID), 0o700); err != nil {
 		return fmt.Errorf("while creating VM dir: %w", err)
 	}
+	if s.netless {
+		if err := s.serveTun2connectEgress(ctx, actorUID); err != nil {
+			return err
+		}
+	}
 	tPrep := time.Now()
 
 	// MEMORY snapshots carry each container's upper as a tar (rootfsUpperTarFile).

@@ -189,7 +189,7 @@ func TestEgressActivationFailsClosed(t *testing.T) {
 	if err := actor.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	egress.handle(proxy, egress.active[testActorUID])
+	egress.handle(proxy, egress.active[testActorUID], egress.acceptRedirected)
 	if _, err := actor.Read(make([]byte, 1)); err == nil {
 		t.Fatal("failed activation admitted egress")
 	}
@@ -213,7 +213,7 @@ func TestEgressExpiryRejectsNewButPreservesEstablished(t *testing.T) {
 	}
 	actor, proxy := net.Pipe()
 	defer actor.Close()
-	egress.handle(proxy, egress.active[testActorUID])
+	egress.handle(proxy, egress.active[testActorUID], egress.acceptRedirected)
 	deadline := time.Now().Add(time.Second)
 	for dials.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
@@ -233,7 +233,7 @@ func TestEgressExpiryRejectsNewButPreservesEstablished(t *testing.T) {
 	if err := newActor.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	egress.handle(newProxy, egress.active[testActorUID])
+	egress.handle(newProxy, egress.active[testActorUID], egress.acceptRedirected)
 	if _, err := newActor.Read(make([]byte, 1)); err == nil {
 		t.Fatal("new tunnel admitted after certificate expiry")
 	}
@@ -287,7 +287,7 @@ func TestEgressRenewsBeforeExpiry(t *testing.T) {
 	}
 	actor, proxy := net.Pipe()
 	defer actor.Close()
-	egress.handle(proxy, egress.active[testActorUID])
+	egress.handle(proxy, egress.active[testActorUID], egress.acceptRedirected)
 	_ = egress.Deactivate(context.Background(), testActorUID)
 }
 
@@ -426,7 +426,7 @@ func TestEgressEndToEnd(t *testing.T) {
 		_ = downstreamActor.Close()
 		_ = downstreamProxy.Close()
 	})
-	egress.handle(downstreamProxy, egress.active[testActorUID])
+	egress.handle(downstreamProxy, egress.active[testActorUID], egress.acceptRedirected)
 
 	req := receiveWithin(t, requests, "gateway CONNECT request")
 	if req.Method != http.MethodConnect || req.Host != "192.0.2.10:443" {
@@ -474,7 +474,7 @@ func TestEgressRejectsInactiveConnection(t *testing.T) {
 	if err := actor.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	egress.handle(proxy, egress.active[testActorUID])
+	egress.handle(proxy, egress.active[testActorUID], egress.acceptRedirected)
 	if _, err := actor.Read(make([]byte, 1)); err == nil {
 		t.Fatal("inactive connection remained open")
 	}
@@ -515,7 +515,7 @@ func TestEgressBoundsHowLongATunnelWaitsToOpen(t *testing.T) {
 	egress.mu.Lock()
 	active := egress.active[testActorUID]
 	egress.mu.Unlock()
-	egress.handle(proxy, active)
+	egress.handle(proxy, active, egress.acceptRedirected)
 
 	receiveWithin(t, withdrawn, "the gateway to see the CONNECT withdrawn")
 	if _, err := actor.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {

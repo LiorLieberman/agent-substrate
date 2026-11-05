@@ -243,6 +243,7 @@ func do(ctx context.Context) error {
 		return err
 	}
 	ateworkerService := NewService(*podUID, *chBinary, *guestDebug, *maxActors, tunnel, actorLogger, bootID)
+	ateworkerService.netless = *netless
 	ateworkerService.throttleMemory = cgroup.PSIEnabled(cgroup.Root)
 	if !ateworkerService.throttleMemory {
 		slog.WarnContext(ctx, "Kernel has no cgroup memory pressure (PSI), so actor cgroups get no memory limit and an actor over its booking can restart the worker")
@@ -392,6 +393,9 @@ type AteWorkerService struct {
 	podUID     string
 	chBinary   string
 	guestDebug bool
+	// netless boots actors with no network card. tun2connect in the guest
+	// carries their connections to atunnel over vsock.
+	netless bool
 
 	// snapshotWrites holds a slot per CH snapshot write in flight, whose page
 	// cache memoryReservedBytes budgets for.

@@ -667,8 +667,8 @@ func TestClientDialContextValidatesInput(t *testing.T) {
 			destination: "192.0.2.10",
 		},
 		{
-			name:        "destination is a hostname",
-			destination: "example.com:443",
+			name:        "destination is neither a DNS name nor an IP",
+			destination: "exa mple.com:443",
 		},
 	}
 	for _, tt := range tests {
