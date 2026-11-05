@@ -36,10 +36,11 @@ type crashReporter interface {
 
 var _ crashReporter = (*register.CrashReporter)(nil)
 
-// watchSandbox handles the actor's sandbox dying while nothing is stopping it:
-// the actor is torn down here, since the control plane will not reach this
-// worker for it again, and then reported crashed.
-func (s *AteWorkerService) watchSandbox(ctx context.Context, hosted *hostedActor, runscPath string, actorDirs *ateworkerpb.ActorDirs, containers []*ateworkerpb.Container) {
+// watchSandbox handles the actor's sandbox, or a netless actor's tun2connect,
+// dying while nothing is stopping it: the actor is torn down here, since the
+// control plane will not reach this worker for it again, and then reported
+// crashed.
+func (s *AteWorkerService) watchSandbox(ctx context.Context, hosted *hostedActor, rcmd *runsc, runscPath string, actorDirs *ateworkerpb.ActorDirs, containers []*ateworkerpb.Container) {
 	attribution := hosted.attribution
 	if hosted.sandbox == nil {
 		slog.WarnContext(ctx, "Cannot watch the sandbox, a crash will go unreported: it was never pinned", slog.String("actorUID", attribution.UID))
@@ -51,13 +52,18 @@ func (s *AteWorkerService) watchSandbox(ctx context.Context, hosted *hostedActor
 		slog.WarnContext(ctx, "Cannot watch the sandbox, a crash will go unreported", slog.String("actorUID", attribution.UID), slog.Any("err", err))
 		return
 	}
+	tun2connectExited := s.watchTun2connect(rcmd)
 	go func() {
-		<-exited
+		message := "gVisor sandbox exited"
+		select {
+		case <-exited:
+		case status := <-tun2connectExited:
+			message = "tun2connect exited: " + status
+		}
 		if s.shuttingDown.Load() {
 			return
 		}
 		ctx := context.Background()
-		message := "gVisor sandbox exited"
 		if hosted.memory.Killed() {
 			message = "killed for exceeding its memory limit"
 		}
@@ -71,7 +77,7 @@ func (s *AteWorkerService) watchSandbox(ctx context.Context, hosted *hostedActor
 		}
 		ours := s.lookupActor(attribution.UID) == hosted && !hosted.stopping.Load()
 		if ours {
-			slog.WarnContext(ctx, "Sandbox died", slog.String("actorUID", attribution.UID), slog.Int("pid", pid))
+			slog.WarnContext(ctx, "Sandbox died", slog.String("actorUID", attribution.UID), slog.Int("pid", pid), slog.String("reason", message))
 			if err := s.terminateWorkload(ctx, attribution.Ref, attribution.UID, runscPath, actorDirs, containers); err != nil {
 				slog.WarnContext(ctx, "Failed to tear down the dead sandbox", slog.String("actorUID", attribution.UID), slog.Any("err", err))
 			}

@@ -250,10 +250,10 @@ const (
 	WorkerPoolReasonDefaultConfigNotFound = "DefaultConfigNotFound"
 )
 
-// WorkerPoolNetlessAnnotation, set to "true" on a microVM WorkerPool, boots
-// every actor placed on the pool with no network card. It needs the
-// NetlessMicroVM preview gate: without it, the pool's workers refuse to start.
-// Pools of other sandbox classes ignore it.
+// WorkerPoolNetlessAnnotation, set to "true" on a WorkerPool, runs every actor
+// placed on the pool with no network card. A microVM pool needs the
+// NetlessMicroVM preview gate and a gVisor pool needs NetlessGVisor: without
+// it, the pool's workers refuse to start.
 const WorkerPoolNetlessAnnotation = "workerpool.ate.dev/netless"
 
 // WorkerPool is the Schema for the workerpools API

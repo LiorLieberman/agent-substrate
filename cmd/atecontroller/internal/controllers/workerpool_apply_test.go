@@ -1178,8 +1178,8 @@ func TestBuildDeploymentPreview(t *testing.T) {
 	}
 }
 
-// Only an annotated microVM pool passes --netless, since a worker exits on a
-// flag it does not know.
+// Only an annotated pool passes --netless, since a worker exits on a flag
+// it does not know. The microVM and gVisor workers both take it.
 func TestBuildDeploymentNetless(t *testing.T) {
 	netless := map[string]string{atev1.WorkerPoolNetlessAnnotation: "true"}
 	for _, tc := range []struct {
@@ -1191,7 +1191,7 @@ func TestBuildDeploymentNetless(t *testing.T) {
 		{name: "not annotated", class: atev1.SandboxClassMicroVM},
 		{name: "annotated", class: atev1.SandboxClassMicroVM, annotations: netless, want: true},
 		{name: "annotated false", class: atev1.SandboxClassMicroVM, annotations: map[string]string{atev1.WorkerPoolNetlessAnnotation: "false"}},
-		{name: "annotated gvisor pool", class: atev1.SandboxClassGvisor, annotations: netless},
+		{name: "annotated gvisor pool", class: atev1.SandboxClassGvisor, annotations: netless, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wp := testWorkerPoolApplyConfig(nil)
@@ -1203,9 +1203,14 @@ func TestBuildDeploymentNetless(t *testing.T) {
 			if got := slices.Contains(c.Args, "--netless"); got != tc.want {
 				t.Errorf("--netless passed = %v, want %v (args %q)", got, tc.want, c.Args)
 			}
-			// A netless worker builds no tap, so it gets neither NET_ADMIN nor the tun device.
-			if got := slices.Contains(c.SecurityContext.Capabilities.Add, "NET_ADMIN"); got == tc.want {
-				t.Errorf("NET_ADMIN granted = %v, want %v", got, !tc.want)
+			// A netless worker builds no tap or veth: a microVM one needs neither
+			// NET_ADMIN nor the tun device, and a gVisor one no NET_RAW.
+			dropped := corev1.Capability("NET_ADMIN")
+			if tc.class == atev1.SandboxClassGvisor {
+				dropped = "NET_RAW"
+			}
+			if got := slices.Contains(c.SecurityContext.Capabilities.Add, dropped); got == tc.want {
+				t.Errorf("%s granted = %v, want %v", dropped, got, !tc.want)
 			}
 			if tc.class == atev1.SandboxClassMicroVM {
 				tun := slices.ContainsFunc(c.VolumeMounts, func(m corev1ac.VolumeMountApplyConfiguration) bool { return *m.MountPath == tunDevicePath })

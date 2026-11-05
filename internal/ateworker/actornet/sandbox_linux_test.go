@@ -257,6 +257,39 @@ func TestSetupSandboxNetworkWithoutVeth(t *testing.T) {
 	}
 }
 
+// gVisor copies the namespace's links into the sandbox, so a netless one gets
+// lo alone, and lo must be up for gVisor to copy it. Closing removes the name.
+func TestSetupLoopbackSandbox(t *testing.T) {
+	roottest.Require(t, "creates network namespaces")
+	ctx := context.Background()
+	const uid = "bbbbbbbb-0000-0000-0000-00000000000b"
+
+	session, err := SetupLoopbackSandbox(ctx, uid)
+	if err != nil {
+		t.Fatalf("SetupLoopbackSandbox: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close(ctx) })
+
+	if err := netns.Do(ctx, session.Network.RuntimeNetNS, func(context.Context) error {
+		links, err := netlink.LinkList()
+		if err != nil {
+			return err
+		}
+		if len(links) != 1 || links[0].Attrs().Name != "lo" || links[0].Attrs().Flags&net.FlagUp == 0 {
+			t.Errorf("links = %v, want lo alone, up", links)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("listing links: %v", err)
+	}
+	if err := session.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := os.Stat(nodepath.ActorNetNSPath(uid)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the namespace's name survived Close: %v", err)
+	}
+}
+
 func TestSetupSucceedsOverALeftoverNamespace(t *testing.T) {
 	roottest.Require(t, "creates network namespaces")
 	ctx := context.Background()

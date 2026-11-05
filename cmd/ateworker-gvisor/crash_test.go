@@ -77,7 +77,7 @@ func TestWatchSandboxIgnoresExpectedExits(t *testing.T) {
 			hosted := &hostedActor{attribution: resources.ActorAttribution{UID: "actor-a"}, sandbox: sandbox}
 			s := &AteWorkerService{locks: actorlock.New(), actors: map[string]*hostedActor{"actor-a": hosted}, crashReporter: reporter}
 			tc.setup(s, hosted)
-			s.watchSandbox(context.Background(), hosted, "", actorDirs, nil)
+			s.watchSandbox(context.Background(), hosted, nil, "", actorDirs, nil)
 			select {
 			case msg := <-reporter.reports:
 				t.Fatalf("reported %q for an expected exit", msg)

@@ -109,6 +109,15 @@ func (s *AteWorkerService) hostActor(ctx context.Context, attribution resources.
 		}
 	}
 
+	// A netless actor has no veth, so no nftables or DNS relay either:
+	// tun2connect in the sandbox reaches atunnel over a unix socket.
+	if s.netless {
+		if err := s.hostNetless(ctx, hosted); err != nil {
+			evict()
+			return nil, err
+		}
+		return hosted, nil
+	}
 	session, err := actornet.ServeSandbox(ctx, actornet.SandboxNetworkConfig{
 		ActorUID:   uid,
 		Veth:       true,
@@ -152,6 +161,9 @@ func (s *AteWorkerService) unhostActor(ctx context.Context, actorUID string) err
 		hosted.sandbox = nil
 	}
 	s.actorsMu.Unlock()
+	if s.netless {
+		removeTun2connectDir(ctx, actorUID)
+	}
 	if hosted.network == nil {
 		return nil
 	}
@@ -214,8 +226,12 @@ func (s *AteWorkerService) setSession(actorUID string, session *workloadSession)
 	}
 }
 
-// sandboxDialer looks up the actor on each dial.
-func (s *AteWorkerService) sandboxDialer(actorUID string) ingress.DialFunc {
+// sandboxDialer dials the actor through its gateway namespace, looked up on
+// each dial, or through runsc port-forward for a netless actor.
+func (s *AteWorkerService) sandboxDialer(actorUID string, rcmd *runsc) ingress.DialFunc {
+	if s.netless {
+		return rcmd.dialPortForward
+	}
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		s.actorsMu.RLock()
 		var session *actornet.SandboxSession

@@ -141,6 +141,24 @@ func prepareNamespace(context.Context) error {
 	return linkUp("lo")
 }
 
+// SetupLoopbackSandbox creates the namespace of a gVisor actor with no network
+// card: lo, up, is its only link, and nothing is served there.
+func SetupLoopbackSandbox(ctx context.Context, actorUID string) (*SandboxSession, error) {
+	if actorUID == "" {
+		return nil, fmt.Errorf("actornet: actor UID is required")
+	}
+	actorNSName := nodepath.ActorNetNSName(actorUID)
+	actorNS, err := netns.CreateNamed(actorNSName)
+	if err != nil {
+		return nil, fmt.Errorf("while creating the actor netns %s: %w", actorNSName, err)
+	}
+	network := &SandboxNetwork{ActorUID: actorUID, RuntimeNetNS: actorNS, GatewayNetNS: actorNS}
+	if err := netns.Do(ctx, actorNS, func(context.Context) error { return linkUp("lo") }); err != nil {
+		return nil, errors.Join(err, CleanupSandboxNetwork(network))
+	}
+	return &SandboxSession{Network: network}, nil
+}
+
 // sandboxSysctls are set in every sandbox namespace, in this order. A new
 // namespace copies its IPv4 conf/all and conf/default from the node, where
 // kube-proxy and CNI plugins set their own values, and takes the kernel's

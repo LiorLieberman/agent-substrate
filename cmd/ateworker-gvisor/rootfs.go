@@ -27,10 +27,19 @@ import (
 
 // setupAppRootfs composes an application container's bundle rootfs, the base
 // layer under the sandbox's restored rootfs writes, and writes its /etc files.
-func setupAppRootfs(actorDirs *ateworkerpb.ActorDirs, containerName string) error {
+func setupAppRootfs(actorDirs *ateworkerpb.ActorDirs, containerName string, netless bool) error {
 	bundle := ociBundlePath(actorDirs, containerName)
 	if err := imagecache.SetupBundleRootfs(bundle); err != nil {
 		return err
 	}
-	return actornet.WriteRootfsEtcFiles(filepath.Join(bundle, "rootfs"), ocispec.Hostname)
+	return writeRootfsEtcFiles(filepath.Join(bundle, "rootfs"), netless)
+}
+
+// writeRootfsEtcFiles writes a container's resolv.conf and hosts. A netless
+// actor's resolver is tun2connect.
+func writeRootfsEtcFiles(rootfs string, netless bool) error {
+	if netless {
+		return actornet.WriteNetlessRootfsEtcFiles(rootfs, ocispec.Hostname)
+	}
+	return actornet.WriteRootfsEtcFiles(rootfs, ocispec.Hostname)
 }

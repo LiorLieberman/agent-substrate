@@ -65,6 +65,11 @@ func (r *runsc) buildArgs(command, containerName string, extraArgs ...string) []
 	if r.enableCoreTags {
 		args = append(args, "--enable-core-tags")
 	}
+	// runsc applies --host-uds in each container's own gofer, so only
+	// tun2connect's mounts can reach a host socket: the egress socket.
+	if containerName == tun2connectContainerName {
+		args = append(args, "--host-uds=open")
+	}
 	args = append(args, "-root", runscStateDir(r.actorDirs))
 	args = append(args, command)
 	args = append(args, subcommandFlags...)
@@ -102,13 +107,17 @@ func noRootContainerArgs(containerName string) []string {
 func (r *runsc) writeSpec(containerName string) error {
 	bundlePath := ociBundlePath(r.actorDirs, containerName)
 	var spec *specs.Spec
-	if containerName == ocispec.SandboxID {
+	switch containerName {
+	case ocispec.SandboxID:
 		// atelet makes only the application containers' bundles.
 		if err := os.MkdirAll(bundlePath, 0o700); err != nil {
 			return fmt.Errorf("while creating bundle %q: %w", bundlePath, err)
 		}
 		spec = ocispec.BuildSandbox(r.actorUID)
-	} else {
+	case tun2connectContainerName:
+		// stageTun2connect made the bundle.
+		spec = tun2connectSpec(r.actorUID)
+	default:
 		i := slices.IndexFunc(r.containers, func(c *ateworkerpb.Container) bool { return c.GetName() == containerName })
 		if i < 0 {
 			return fmt.Errorf("container %q is not in the workload spec", containerName)

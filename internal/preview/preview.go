@@ -45,6 +45,10 @@ const (
 	// GateGoldenEgressPolicy controls configuring a golden actor's egress policy on its template.
 	GateGoldenEgressPolicy Gate = "GoldenEgressPolicy"
 
+	// GateNetlessGVisor controls whether a gVisor WorkerPool may run its
+	// actors with no network card (the workerpool.ate.dev/netless annotation).
+	GateNetlessGVisor Gate = "NetlessGVisor"
+
 	// GateNetlessMicroVM controls whether a microVM WorkerPool may boot its
 	// actors with no network card (the workerpool.ate.dev/netless annotation).
 	GateNetlessMicroVM Gate = "NetlessMicroVM"
@@ -64,6 +68,7 @@ const All = "ALL"
 var realKnownGates = []Gate{
 	GateExternalVolumes,
 	GateGoldenEgressPolicy,
+	GateNetlessGVisor,
 	GateNetlessMicroVM,
 	GatePerTemplateSnapshotLocation,
 }

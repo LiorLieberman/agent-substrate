@@ -109,6 +109,7 @@ var (
 	readinessListenAddress = pflag.String("readiness-listen-address", "0.0.0.0:8080", "Address for the HTTP /readyz and /healthz probes")
 	maxActors              = pflag.Int("max-actors", 1000, "How many actors this worker will host at once")
 	usageSampleInterval    = pflag.Duration("usage-sample-interval", time.Minute, "How often the ateworker samples the resource usage of its actors. Each sample writes an ate.actor.usage_sampled record per actor, and GetActiveWorkloadStats serves the latest.")
+	netless                = pflag.Bool("netless", false, "Run actors with no network card. Needs the NetlessGVisor preview gate.")
 
 	showVersion  = pflag.Bool("version", false, "Print version and exit.")
 	logLevelFlag = pflag.String("log-level", "info", "Minimum log level: debug, info, warn, or error.")
@@ -163,6 +164,9 @@ func do(ctx context.Context) error {
 	}
 	if *usageSampleInterval < minUsageSampleInterval {
 		return fmt.Errorf("--usage-sample-interval must be at least %v, got %v", minUsageSampleInterval, *usageSampleInterval)
+	}
+	if *netless && !preview.IsEnabled(preview.GateNetlessGVisor) {
+		return fmt.Errorf("--netless needs the %s preview gate", preview.GateNetlessGVisor)
 	}
 	bootID, err := bootid.Read(bootid.Path)
 	if err != nil {
@@ -268,6 +272,7 @@ func do(ctx context.Context) error {
 		return err
 	}
 	ateworkerService := NewService(tunnel, actorLogger, *maxActors, flags, bootID)
+	ateworkerService.netless = *netless
 	ateworkerService.throttleMemory = cgroup.PSIEnabled(defaultCgroupRoot)
 	if !ateworkerService.throttleMemory {
 		slog.WarnContext(ctx, "Kernel has no cgroup memory pressure (PSI), so sandboxes keep memory.max and an OOM kill in one can restart the worker")
@@ -389,6 +394,9 @@ type AteWorkerService struct {
 	tunnel      *atunnel.Tunnel
 	// usage writes the usage records. Nil writes none.
 	usage *workerstats.UsageEmitter
+	// netless runs actors with no network card. tun2connect in the sandbox
+	// carries their connections to atunnel over a unix socket.
+	netless bool
 
 	// shuttingDown is set once SIGTERM has been received. While true, new
 	// workload RPCs are rejected with codes.Unavailable.
@@ -523,6 +531,20 @@ func (s *AteWorkerService) gracefulShutdown(ctx context.Context) {
 		}
 	}
 	wg.Wait()
+	// tun2connect stops last, so the actors keep their network while they
+	// shut down.
+	if s.netless {
+		for _, session := range sessions {
+			wg.Add(1)
+			go func(rcmd *runsc) {
+				defer wg.Done()
+				if err := killContainer(ctx, rcmd, tun2connectContainerName, deadline); err != nil {
+					slog.WarnContext(ctx, "Failed to kill container during shutdown", slog.String("container", tun2connectContainerName), slog.Any("err", err))
+				}
+			}(session.rcmd)
+		}
+		wg.Wait()
+	}
 	for _, h := range hosted {
 		s.recordFinal(ctx, h)
 	}
@@ -666,6 +688,10 @@ func (s *AteWorkerService) RunWorkload(ctx context.Context, req *ateworkerpb.Run
 	if err := validateRunscPath(req.GetActorUid(), req.GetActorDirs(), req.GetRunscPath()); err != nil {
 		return nil, err
 	}
+	tun2connect, err := s.tun2connectBinary(req.GetActorUid(), req.GetActorDirs(), req.GetRuntimeAssetPaths())
+	if err != nil {
+		return nil, err
+	}
 	if !s.locks.Lock(ctx, req.GetActorUid()) {
 		return nil, fmt.Errorf("gave up waiting for the actor's lock: %w", ctx.Err())
 	}
@@ -763,6 +789,12 @@ func (s *AteWorkerService) RunWorkload(ctx context.Context, req *ateworkerpb.Run
 	if err := rcmd.cmdStart(ctx, pw, ocispec.SandboxID); err != nil {
 		return nil, fmt.Errorf("while starting the sandbox: %w", err)
 	}
+	if s.netless {
+		containersToDelete = append(containersToDelete, tun2connectContainerName)
+		if err := s.startTun2connect(ctx, rcmd, attribution, tun2connect, ""); err != nil {
+			return nil, err
+		}
+	}
 
 	// Create and start each application container, each with its own log pipe so
 	// every line is tagged with the originating container (ate.actor.container.name).
@@ -776,7 +808,7 @@ func (s *AteWorkerService) RunWorkload(ctx context.Context, req *ateworkerpb.Run
 			return nil, fmt.Errorf("while starting json log pipe for %q: %w", ac.GetName(), err)
 		}
 		defer pw.Close()
-		if err := setupAppRootfs(req.GetActorDirs(), ac.GetName()); err != nil {
+		if err := setupAppRootfs(req.GetActorDirs(), ac.GetName(), s.netless); err != nil {
 			return nil, fmt.Errorf("while composing %q rootfs: %w", ac.GetName(), err)
 		}
 		containersToDelete = append(containersToDelete, ac.GetName())
@@ -789,17 +821,17 @@ func (s *AteWorkerService) RunWorkload(ctx context.Context, req *ateworkerpb.Run
 	}
 
 	// Block until every wakeup-probe-enabled container reports 200.
-	if err := wakeupprobe.WaitAll(ctx, req.GetSpec().GetContainers(), actornet.ActorVethIP, wakeupprobe.DialFunc(s.sandboxDialer(req.GetActorUid()))); err != nil {
+	if err := wakeupprobe.WaitAll(ctx, req.GetSpec().GetContainers(), actornet.ActorVethIP, wakeupprobe.DialFunc(s.sandboxDialer(req.GetActorUid(), rcmd))); err != nil {
 		return nil, fmt.Errorf("while waiting for container wakeup probe: %w", err)
 	}
-	if err := s.tunnel.ActivateIngress(attribution, s.sandboxDialer(req.GetActorUid())); err != nil {
+	if err := s.tunnel.ActivateIngress(attribution, s.sandboxDialer(req.GetActorUid(), rcmd)); err != nil {
 		return nil, err
 	}
 
 	s.actorLogger.EmitLifecycleLog(ctx, "Actor started", attribution)
 	s.setSession(req.GetActorUid(), &workloadSession{rcmd: rcmd, containers: containerNames(req.GetSpec().GetContainers())})
 	s.recordInitial(ctx, hosted)
-	s.watchSandbox(ctx, hosted, req.GetRunscPath(), req.GetActorDirs(), req.GetSpec().GetContainers())
+	s.watchSandbox(ctx, hosted, rcmd, req.GetRunscPath(), req.GetActorDirs(), req.GetSpec().GetContainers())
 
 	return &ateworkerpb.RunWorkloadResponse{WorkerEpoch: epoch}, nil
 }
@@ -1125,6 +1157,10 @@ func (s *AteWorkerService) RestoreWorkload(ctx context.Context, req *ateworkerpb
 	if err := validateRunscPath(req.GetActorUid(), req.GetActorDirs(), req.GetRunscPath()); err != nil {
 		return nil, err
 	}
+	tun2connect, err := s.tun2connectBinary(req.GetActorUid(), req.GetActorDirs(), req.GetRuntimeAssetPaths())
+	if err != nil {
+		return nil, err
+	}
 	if !s.locks.Lock(ctx, req.GetActorUid()) {
 		return nil, fmt.Errorf("gave up waiting for the actor's lock: %w", ctx.Err())
 	}
@@ -1268,6 +1304,19 @@ func (s *AteWorkerService) RestoreWorkload(ctx context.Context, req *ateworkerpb
 			return nil, fmt.Errorf("while restoring the sandbox: %w", err)
 		}
 	}
+	if s.netless {
+		var memoryImage string
+		if fidelity == ateworkerpb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY {
+			memoryImage = checkpointDir
+		}
+		containersToDelete = append(containersToDelete, tun2connectContainerName)
+		err = s.startTun2connect(ctx, rcmd, attribution, tun2connect, memoryImage)
+		// tun2connect is the sandbox's network.
+		timing.netSetup += lap(&tLast)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	// Create and restore each application container, each with its own log pipe so
 	// every line is tagged with the originating container (ate.actor.container.name).
@@ -1279,7 +1328,7 @@ func (s *AteWorkerService) RestoreWorkload(ctx context.Context, req *ateworkerpb
 			return nil, fmt.Errorf("while starting json log pipe for %q: %w", ac.GetName(), err)
 		}
 		defer pw.Close()
-		err = setupAppRootfs(req.GetActorDirs(), ac.GetName())
+		err = setupAppRootfs(req.GetActorDirs(), ac.GetName(), s.netless)
 		timing.appRootfs += lap(&tLast)
 		if err != nil {
 			return nil, fmt.Errorf("while composing %q rootfs: %w", ac.GetName(), err)
@@ -1307,12 +1356,12 @@ func (s *AteWorkerService) RestoreWorkload(ctx context.Context, req *ateworkerpb
 	}
 
 	// Block until every wakeup-probe-enabled container reports 200.
-	err = wakeupprobe.WaitAll(ctx, containers, actornet.ActorVethIP, wakeupprobe.DialFunc(s.sandboxDialer(req.GetActorUid())))
+	err = wakeupprobe.WaitAll(ctx, containers, actornet.ActorVethIP, wakeupprobe.DialFunc(s.sandboxDialer(req.GetActorUid(), rcmd)))
 	timing.wakeupProbe = lap(&tLast)
 	if err != nil {
 		return nil, fmt.Errorf("while waiting for container wakeup probe: %w", err)
 	}
-	err = s.tunnel.ActivateIngress(attribution, s.sandboxDialer(req.GetActorUid()))
+	err = s.tunnel.ActivateIngress(attribution, s.sandboxDialer(req.GetActorUid(), rcmd))
 	timing.activate += lap(&tLast)
 	if err != nil {
 		return nil, err
@@ -1336,7 +1385,7 @@ func (s *AteWorkerService) RestoreWorkload(ctx context.Context, req *ateworkerpb
 	s.actorLogger.EmitLifecycleLog(ctx, "Actor restored", attribution)
 	s.setSession(req.GetActorUid(), &workloadSession{rcmd: rcmd, containers: containerNames(containers)})
 	s.recordInitial(ctx, hosted)
-	s.watchSandbox(ctx, hosted, req.GetRunscPath(), req.GetActorDirs(), containers)
+	s.watchSandbox(ctx, hosted, rcmd, req.GetRunscPath(), req.GetActorDirs(), containers)
 
 	return &ateworkerpb.RestoreWorkloadResponse{WorkerEpoch: epoch}, nil
 }
@@ -1391,6 +1440,10 @@ func (s *AteWorkerService) terminateWorkload(ctx context.Context, actorRef resou
 	// container without its record and the actor unrecoverable.
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
+	if s.netless {
+		// tun2connect goes with the actor's containers, before the sandbox.
+		containers = append(slices.Clone(containers), &ateworkerpb.Container{Name: tun2connectContainerName})
+	}
 	// Stop the containers before deleting them, to avoid leaving a live container
 	// with no bundle on disk. Best-effort: if they are already stopped, the
 	// delete succeeds anyway.

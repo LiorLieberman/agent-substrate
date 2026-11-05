@@ -39,7 +39,7 @@ func Tun2connect(actorUID string, args []string) *specs.Spec {
 				Effective: tun2connectCapabilities,
 				Permitted: tun2connectCapabilities,
 			},
-			// It holds a vsock stream for every connection the actor has open.
+			// It holds a stream to atunnel for every connection the actor has open.
 			Rlimits: rlimits(),
 		},
 		Root: &specs.Root{

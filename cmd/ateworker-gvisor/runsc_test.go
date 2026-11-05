@@ -199,6 +199,21 @@ func TestBuildArgs(t *testing.T) {
 				"-list-sub",
 			},
 		},
+		{
+			// runsc starts each container's gofer on start.
+			name:          "start tun2connect",
+			command:       "start",
+			containerName: tun2connectContainerName,
+			want: []string{
+				"-global1",
+				"-global2",
+				"-start-global",
+				"--host-uds=open",
+				"-root", "/node/actors/test-actor-123/runsc-state",
+				"start",
+				tun2connectContainerName,
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := r.buildArgs(tc.command, tc.containerName, tc.extraArgs...)
@@ -322,6 +337,18 @@ func TestCreateArgs(t *testing.T) {
 			"-pid-file", "/node/actors/test-actor-123/pidfiles/app.pid",
 			"app",
 		},
+	}, {
+		container: tun2connectContainerName,
+		want: []string{
+			"-global1",
+			"-global2",
+			"--host-uds=open",
+			"-root", "/node/actors/test-actor-123/runsc-state",
+			"create",
+			"-bundle", "/node/actors/test-actor-123/bundle/" + tun2connectContainerName,
+			"-pid-file", "/node/actors/test-actor-123/pidfiles/" + tun2connectContainerName + ".pid",
+			tun2connectContainerName,
+		},
 	}} {
 		if got := r.createArgs(tc.container, tc.extra); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("createArgs(%q) = %v, want %v", tc.container, got, tc.want)
@@ -371,6 +398,23 @@ func TestRestoreArgs(t *testing.T) {
 			"-image-path", checkpointDir,
 			"-pid-file", "/node/actors/test-actor-123/pidfiles/app.pid",
 			"app",
+		},
+	}, {
+		// runsc starts each container's gofer on restore too.
+		container: tun2connectContainerName,
+		want: []string{
+			"-global1",
+			"-global2",
+			"-restore-global",
+			"--host-uds=open",
+			"-root", "/node/actors/test-actor-123/runsc-state",
+			"restore",
+			"-restore-sub1",
+			"-restore-sub2",
+			"-bundle", "/node/actors/test-actor-123/bundle/" + tun2connectContainerName,
+			"-image-path", checkpointDir,
+			"-pid-file", "/node/actors/test-actor-123/pidfiles/" + tun2connectContainerName + ".pid",
+			tun2connectContainerName,
 		},
 	}} {
 		if got := r.restoreArgs(tc.container, checkpointDir); !reflect.DeepEqual(got, tc.want) {

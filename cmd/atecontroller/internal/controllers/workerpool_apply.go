@@ -168,9 +168,9 @@ func buildDeploymentApplyConfig(wp *atev1.WorkerPool, otel workerOTelSettings, s
 	previewArg := "--preview=" + strings.Join(enabledGates(), ",")
 	args = append(args, previewArg)
 
-	// Passed only on opt-in, and only to the microVM worker, since a worker
-	// exits on a flag it does not know.
-	netless := wp.Annotations[atev1.WorkerPoolNetlessAnnotation] == "true" && wp.Spec.DefaultSandboxClass() == atev1.SandboxClassMicroVM
+	// Passed only on opt-in, since a worker exits on a flag it does not know.
+	// The gVisor and microVM workers both take it.
+	netless := wp.Annotations[atev1.WorkerPoolNetlessAnnotation] == "true"
 	if netless {
 		args = append(args, "--netless")
 	}
@@ -425,13 +425,18 @@ var workerMicroVMCapabilities = []corev1.Capability{
 	"FOWNER", "CHOWN", "MKNOD", "SETFCAP", "FSETID", "SETPCAP",
 }
 
-// workerCapabilities is caps without NET_ADMIN for a netless pool, whose
-// worker builds no tap for its actors.
-func workerCapabilities(caps []corev1.Capability, netless bool) []corev1.Capability {
+// workerCapabilities is caps without what a netless worker never uses: it
+// builds no tap or veth, but a gVisor worker still brings lo up in the actor's
+// network namespace.
+func workerCapabilities(caps []corev1.Capability, class atev1.SandboxClass, netless bool) []corev1.Capability {
 	if !netless {
 		return caps
 	}
-	return slices.DeleteFunc(slices.Clone(caps), func(c corev1.Capability) bool { return c == "NET_ADMIN" })
+	unused := "NET_RAW"
+	if class == atev1.SandboxClassMicroVM {
+		unused = "NET_ADMIN"
+	}
+	return slices.DeleteFunc(slices.Clone(caps), func(c corev1.Capability) bool { return c == corev1.Capability(unused) })
 }
 
 // workerSecurityContext returns the worker container security context for a sandbox
@@ -466,7 +471,7 @@ func workerSecurityContext(class atev1.SandboxClass, netless bool) *corev1ac.Sec
 		return sc.
 			WithCapabilities(corev1ac.Capabilities().
 				WithDrop("ALL").
-				WithAdd(workerCapabilities(workerMicroVMCapabilities, netless)...)).
+				WithAdd(workerCapabilities(workerMicroVMCapabilities, class, netless)...)).
 			WithSeccompProfile(corev1ac.SeccompProfile().
 				WithType(corev1.SeccompProfileTypeUnconfined))
 	}
@@ -478,7 +483,7 @@ func workerSecurityContext(class atev1.SandboxClass, netless bool) *corev1ac.Sec
 	return sc.
 		WithCapabilities(corev1ac.Capabilities().
 			WithDrop("ALL").
-			WithAdd(workerGvisorCapabilities...)).
+			WithAdd(workerCapabilities(workerGvisorCapabilities, class, netless)...)).
 		WithSeccompProfile(corev1ac.SeccompProfile().
 			WithType(corev1.SeccompProfileTypeUnconfined))
 }
