@@ -33,6 +33,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"go.ate.dev/substrate/internal/egresspolicy"
 )
 
 // TODO(liorlieberman): support/use CONNECT on Ingress as well.
@@ -1142,17 +1144,11 @@ func gatewayHungUp(err error) bool {
 }
 
 func validateDestination(destination string) error {
-	host, port, err := net.SplitHostPort(destination)
+	dest, err := egresspolicy.NormalizeAuthority(destination)
 	if err != nil {
 		return fmt.Errorf("egress: invalid egress destination %q: %w", destination, err)
 	}
-	if host == "" {
-		return fmt.Errorf("egress: invalid egress destination %q: host is empty", destination)
-	}
-	if net.ParseIP(host) == nil {
-		return fmt.Errorf("egress: invalid egress destination %q: host must be an IP address", destination)
-	}
-	if _, ok := parsePort(port); !ok {
+	if dest.Port == 0 {
 		return fmt.Errorf("egress: invalid egress destination %q: port must be between 1 and 65535", destination)
 	}
 	return nil

@@ -43,6 +43,10 @@ type actorCertificateSource interface {
 // connection originally targeted.
 type originalDestinationFunc func(net.Conn) (string, error)
 
+// acceptFunc reads a downstream connection's destination, logging why if it
+// cannot. Read the stream from conn; reply, if set, says if the tunnel opened.
+type acceptFunc func(ctx context.Context, downstream net.Conn) (conn net.Conn, destination string, reply func(error) error, err error)
+
 // Proxy proxies actor TCP connections through an egress CONNECT dialer. It is
 // long-lived across actor activations, but only carries traffic while an actor
 // is assigned to its worker.
@@ -87,6 +91,31 @@ func New(originalDestination originalDestinationFunc) (*Proxy, error) {
 
 // Bind captures the actor's activation before its listeners start serving.
 func (e *Proxy) Bind(actorUID string) (func(context.Context, net.Listener) error, error) {
+	return e.bind(actorUID, e.acceptRedirected)
+}
+
+// ServeConnect serves an in-guest producer's CONNECT streams on the unix socket
+// at path until deactivation. It leaves the file, maybe the next activation's.
+func (e *Proxy) ServeConnect(ctx context.Context, actorUID, path string) error {
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		return fmt.Errorf("egress: listening on %s: %w", path, err)
+	}
+	listener.SetUnlinkOnClose(false)
+	serve, err := e.bind(actorUID, acceptConnect)
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+	go func() {
+		if err := serve(context.Background(), listener); err != nil {
+			slog.WarnContext(ctx, "atunnel CONNECT listener stopped", slog.String("actorUID", actorUID), slog.Any("err", err))
+		}
+	}()
+	return nil
+}
+
+func (e *Proxy) bind(actorUID string, accept acceptFunc) (func(context.Context, net.Listener) error, error) {
 	if actorUID == "" {
 		return nil, fmt.Errorf("egress: actor UID is required")
 	}
@@ -102,8 +131,18 @@ func (e *Proxy) Bind(actorUID string) (func(context.Context, net.Listener) error
 				active.cancel()
 			}
 		}()
-		return e.serve(ctx, listener, active)
+		return e.serve(ctx, listener, active, accept)
 	}, nil
+}
+
+// acceptRedirected reads the destination of a connection nftables redirected.
+func (e *Proxy) acceptRedirected(ctx context.Context, downstream net.Conn) (net.Conn, string, func(error) error, error) {
+	destination, err := e.originalDestination(downstream)
+	if err != nil {
+		slog.WarnContext(ctx, "atunnel failed to resolve original egress destination", slog.Any("err", err))
+		return nil, "", nil, err
+	}
+	return downstream, destination, nil, nil
 }
 
 func (e *Proxy) activationLocked(actorUID string) *activation {
@@ -116,7 +155,7 @@ func (e *Proxy) activationLocked(actorUID string) *activation {
 	return active
 }
 
-func (e *Proxy) serve(ctx context.Context, listener net.Listener, active *activation) error {
+func (e *Proxy) serve(ctx context.Context, listener net.Listener, active *activation, accept acceptFunc) error {
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -137,7 +176,7 @@ func (e *Proxy) serve(ctx context.Context, listener net.Listener, active *activa
 			}
 			return fmt.Errorf("egress: accepting actor egress connection: %w", err)
 		}
-		e.handle(conn, active)
+		e.handle(conn, active, accept)
 	}
 }
 
@@ -280,7 +319,7 @@ func (e *Proxy) Deactivate(ctx context.Context, actorUID string) error {
 	return err
 }
 
-func (e *Proxy) handle(downstream net.Conn, active *activation) {
+func (e *Proxy) handle(downstream net.Conn, active *activation, accept acceptFunc) {
 	e.mu.Lock()
 	if active == nil || active.ctx.Err() != nil {
 		e.mu.Unlock()
@@ -313,15 +352,23 @@ func (e *Proxy) handle(downstream net.Conn, active *activation) {
 	go func() {
 		defer active.wg.Done()
 		defer downstream.Close()
+		// Deactivate must not wait for a CONNECT head that never arrives.
+		stopAccept := context.AfterFunc(active.ctx, func() { _ = downstream.Close() })
+		defer stopAccept()
 
-		destination, err := e.originalDestination(downstream)
+		conn, destination, reply, err := accept(active.ctx, downstream)
 		if err != nil {
-			slog.WarnContext(active.ctx, "atunnel failed to resolve original egress destination", slog.Any("err", err))
 			return
 		}
 		dialCtx, cancelDial := context.WithTimeout(active.ctx, e.tunnelOpenTimeout)
 		upstream, err := active.dialer.DialContext(dialCtx, destination)
 		cancelDial()
+		if reply != nil {
+			if replyErr := reply(err); replyErr != nil && err == nil {
+				_ = upstream.Close()
+				return
+			}
+		}
 		if err != nil {
 			slog.WarnContext(active.ctx, "atunnel failed to open egress tunnel", slog.String("destination", destination), slog.Any("err", err))
 			return
@@ -334,7 +381,7 @@ func (e *Proxy) handle(downstream net.Conn, active *activation) {
 		})
 		defer stop()
 
-		copyBothWays(downstream, upstream)
+		copyBothWays(conn, upstream)
 	}()
 }
 
